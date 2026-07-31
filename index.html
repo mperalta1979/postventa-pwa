@@ -1,0 +1,835 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Post Venta PWA — Petroflex</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root{
+    --bg-celeste:#eaf4fb;
+    --panel:#ffffff;
+    --navy:#1f3864;
+    --navy-dark:#152a4a;
+    --text:#1a1a1a;
+    --border:#c9dceb;
+    --alert:#c0392b;
+    --alert-bg:#fdecea;
+    --ok:#2e7d32;
+    --ok-bg:#e9f7ea;
+    --warn:#b8860b;
+    --warn-bg:#fff6e0;
+    --muted:#5c7086;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:Segoe UI,Arial,sans-serif;background:var(--bg-celeste);color:var(--text);}
+  header{background:var(--navy);color:#fff;padding:14px 24px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;}
+  header h1{margin:0;font-size:1.3rem;}
+  header .sub{font-size:.78rem;color:#b9cbe4;}
+  .userbox{display:flex;align-items:center;gap:12px;font-size:.85rem;}
+  nav#tabs{background:var(--navy-dark);display:flex;flex-wrap:wrap;padding:0 20px;}
+  nav#tabs button{background:none;border:none;color:#cddcee;padding:12px 16px;cursor:pointer;font-size:.88rem;border-bottom:3px solid transparent;}
+  nav#tabs button:hover{color:#fff;}
+  nav#tabs button.active{color:#fff;border-bottom-color:#5b9bd5;font-weight:600;}
+  main{max-width:1200px;margin:20px auto;padding:0 16px 60px;}
+  .tab{display:none;}
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:18px 22px;margin-bottom:18px;}
+  .panel h2{margin-top:0;color:var(--navy);font-size:1.1rem;}
+  .hint{font-size:.82rem;color:var(--muted);}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
+  .row.filters{margin-bottom:10px;}
+  input[type="text"], input[type="password"], input[type="number"], input[type="date"], input[type="file"], select, textarea{
+    padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:.88rem;font-family:inherit;background:#fff;color:var(--text);
+  }
+  textarea{width:100%;resize:vertical;}
+  .btn{background:var(--navy);color:#fff;border:none;padding:9px 16px;border-radius:6px;cursor:pointer;font-size:.85rem;font-weight:600;}
+  .btn:hover{background:var(--navy-dark);}
+  .btn.secondary{background:#fff;color:var(--navy);border:1px solid var(--navy);}
+  .btn.secondary:hover{background:#f0f5fa;}
+  .btn.danger{background:var(--alert-bg);color:var(--alert);border:1px solid var(--alert);}
+  .btn:disabled{opacity:.5;cursor:not-allowed;}
+  table{width:100%;border-collapse:collapse;font-size:.85rem;}
+  th{background:#eef3f8;color:var(--navy);text-align:left;padding:8px 10px;font-size:.78rem;text-transform:uppercase;letter-spacing:.02em;}
+  td{padding:8px 10px;border-bottom:1px solid var(--border);}
+  .table-scroll{overflow-x:auto;}
+  .pill{display:inline-block;padding:3px 9px;border-radius:20px;font-size:.72rem;font-weight:600;background:#eef3f8;color:var(--navy);}
+  .pill.ok{background:var(--ok-bg);color:var(--ok);}
+  .pill.warn{background:var(--warn-bg);color:var(--warn);}
+  .pill.alert{background:var(--alert-bg);color:var(--alert);}
+  .small-note{font-size:.78rem;color:var(--muted);margin-top:4px;}
+  .empty{text-align:center;padding:36px 10px;color:var(--muted);}
+  .empty .big{font-size:2.2rem;margin-bottom:6px;}
+  .pwd-wrap{position:relative;display:inline-block;}
+  .pwd-wrap input{padding-right:36px;}
+  .pwd-toggle{position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:1rem;padding:2px 4px;color:var(--muted);}
+  #loginScreen{position:fixed;inset:0;background:linear-gradient(135deg,var(--navy) 0%,var(--navy-dark) 100%);display:flex;align-items:center;justify-content:center;z-index:100;}
+  #loginBox{background:#fff;border-radius:12px;padding:36px 34px;width:340px;box-shadow:0 10px 40px rgba(0,0,0,.3);}
+  #loginBox h2{margin-top:0;color:var(--navy);text-align:center;}
+  #loginBox .campo{margin-bottom:14px;}
+  #loginBox label{display:block;font-size:.8rem;color:var(--muted);margin-bottom:4px;}
+  #loginBox input{width:100%;}
+  #loginError{color:var(--alert);font-size:.82rem;min-height:18px;margin-top:6px;}
+  #appWrap{display:none;}
+  .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:14px;}
+  .stat{background:#f2f8fc;border-radius:8px;padding:12px 14px;}
+  .stat .num{font-size:1.4rem;font-weight:700;color:var(--navy);}
+  .stat .lbl{font-size:.75rem;color:var(--muted);}
+</style>
+</head>
+<body>
+
+<div id="loginScreen">
+  <div id="loginBox">
+    <h2>Post Venta PWA</h2>
+    <p class="hint" style="text-align:center;margin-top:-8px;">Petroflex S.A.</p>
+    <div class="campo">
+      <label>Usuario</label>
+      <input type="text" id="loginUsuario" autocomplete="username">
+    </div>
+    <div class="campo">
+      <label>Clave</label>
+      <div class="pwd-wrap" style="width:100%;">
+        <input type="password" id="loginClave" style="width:100%;" autocomplete="current-password">
+        <button type="button" class="pwd-toggle" id="toggleLoginClave">👁</button>
+      </div>
+    </div>
+    <button class="btn" id="btnLogin" style="width:100%;">Entrar</button>
+    <div id="loginError"></div>
+  </div>
+</div>
+
+<div id="appWrap">
+  <header>
+    <div>
+      <h1>Post Venta PWA</h1>
+      <div class="sub">Petroflex S.A.</div>
+    </div>
+    <div class="userbox">
+      <span id="usuarioActualLbl"></span>
+      <button class="btn secondary" id="btnCerrarSesion">Cerrar sesión</button>
+    </div>
+  </header>
+
+  <nav id="tabs">
+    <button data-tab="nueva" class="active">Nueva Solicitud</button>
+    <button data-tab="pendientes">Solicitudes Pendientes</button>
+    <button data-tab="revision">En Revisión</button>
+    <button data-tab="historial">Historial</button>
+    <button data-tab="importar" class="admin-only" style="display:none;">Importar NV</button>
+    <button data-tab="usuarios" class="admin-only" style="display:none;">Usuarios</button>
+    <button data-tab="config" class="admin-only" style="display:none;">Sincronización</button>
+  </nav>
+
+  <main>
+
+    <!-- NUEVA SOLICITUD -->
+    <section id="tab-nueva" class="tab" style="display:block;">
+      <div class="panel">
+        <h2>Postventa — Nueva Solicitud</h2>
+        <p class="hint" id="hintBuscarNV">Escribe el número de Nota de Venta y busca. Solo puedes crear solicitudes de tus propias NV.</p>
+        <div class="row">
+          <input type="text" id="buscarNVInput" placeholder="N° de NV...">
+          <button class="btn" id="btnBuscarNV">Buscar</button>
+        </div>
+        <div id="resultadoBusquedaNV" style="margin-top:16px;"></div>
+      </div>
+    </section>
+
+    <!-- PENDIENTES -->
+    <section id="tab-pendientes" class="tab">
+      <div class="panel">
+        <h2>Solicitudes Pendientes</h2>
+        <p class="hint">Reclamos recién enviados, esperando aprobación o rechazo.</p>
+        <div id="listaPendientes"></div>
+        <div id="emptyPendientes" class="empty"><div class="big">📭</div>No hay solicitudes pendientes.</div>
+      </div>
+    </section>
+
+    <!-- EN REVISION -->
+    <section id="tab-revision" class="tab">
+      <div class="panel">
+        <h2>Postventa — En Revisión</h2>
+        <p class="hint">Reclamos ya aprobados: revisa el caso, deja tus conclusiones y cierra ingresando el N° de Solicitud de Nota de Crédito.</p>
+        <div id="listaRevision"></div>
+        <div id="emptyRevision" class="empty"><div class="big">🔎</div>No hay casos en revisión.</div>
+      </div>
+    </section>
+
+    <!-- HISTORIAL -->
+    <section id="tab-historial" class="tab">
+      <div class="panel">
+        <h2>Postventa — Historial</h2>
+        <div class="row filters">
+          <input type="text" id="filtroHistNV" placeholder="Filtrar por NV...">
+          <select id="filtroHistEstado">
+            <option value="">Todos los estados</option>
+            <option value="rechazado">Rechazado</option>
+            <option value="cerrado">Cerrado</option>
+          </select>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>N°</th><th>Fecha</th><th>NV</th><th>Cliente</th><th>Solicitante</th><th>Tipo</th><th>Estado</th><th>N° Sol. Nota Crédito</th></tr></thead>
+            <tbody id="tbodyHistorial"></tbody>
+          </table>
+        </div>
+        <div id="emptyHistorial" class="empty"><div class="big">🗂️</div>Sin solicitudes resueltas todavía.</div>
+      </div>
+    </section>
+
+    <!-- IMPORTAR NV (admin) -->
+    <section id="tab-importar" class="tab">
+      <div class="panel">
+        <h2>Importar Notas de Venta</h2>
+        <p class="hint">Sube el mismo archivo tipo query (.xlsx) que usas en Control de Negocios (encabezados en la fila 7). Se guardan NV, cliente, vendedor, fecha y el detalle de códigos de cada una.</p>
+        <div class="row">
+          <input type="file" id="fileInputNV" accept=".xlsx,.xls">
+          <button class="btn" id="btnProcesarNV">Procesar archivo</button>
+          <span id="importNVStatus" class="hint"></span>
+        </div>
+        <div class="stat-grid" style="margin-top:16px;" id="statsImportNV"></div>
+      </div>
+    </section>
+
+    <!-- USUARIOS (admin) -->
+    <section id="tab-usuarios" class="tab">
+      <div class="panel">
+        <h2>Usuarios</h2>
+        <p class="hint">Solo el Administrador puede crear, eliminar o cambiar la clave de un usuario.</p>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>Usuario</th><th>Rol</th><th>Vendedor asociado</th><th>Acciones</th></tr></thead>
+            <tbody id="tbodyUsuarios"></tbody>
+          </table>
+        </div>
+        <h2 style="margin-top:24px;">Crear usuario nuevo</h2>
+        <div class="row">
+          <input type="text" id="nuevoUsuarioNombre" placeholder="Nombre de usuario...">
+          <div class="pwd-wrap">
+            <input type="password" id="nuevoUsuarioClave" placeholder="Clave...">
+            <button type="button" class="pwd-toggle" data-target="nuevoUsuarioClave">👁</button>
+          </div>
+          <select id="nuevoUsuarioRol">
+            <option value="vendedor">Vendedor</option>
+            <option value="admin">Admin</option>
+          </select>
+          <input type="text" id="nuevoUsuarioVendedor" placeholder="Vendedor asociado (tal como aparece en las NV) — si tiene más de uno, sepáralos con coma...">
+          <button class="btn" id="btnCrearUsuario">Crear usuario</button>
+        </div>
+        <div id="crearUsuarioStatus" class="small-note"></div>
+      </div>
+    </section>
+
+    <!-- CONFIGURACIÓN SYNC (admin) -->
+    <section id="tab-config" class="tab">
+      <div class="panel">
+        <h2>Sincronización entre equipos</h2>
+        <p class="hint">Para que todos los usuarios vean las mismas solicitudes, este PWA necesita un "bin" de almacenamiento compartido (jsonbin.io). Se crea una sola vez.</p>
+        <div id="syncStatusBox" class="small-note" style="margin-bottom:10px;"></div>
+        <button class="btn" id="btnCrearBinSync">Activar sincronización en la nube</button>
+        <div class="row" style="margin-top:14px;">
+          <input type="text" id="binIdManual" placeholder="...o pega un ID de bin existente aquí">
+          <button class="btn secondary" id="btnUsarBinManual">Usar este ID</button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+// ==================== Estado ====================
+let cuentas = {}; // usuario -> {passwordHash, rol:'admin'|'vendedor', vendedorAsociado}
+let usuarioActual = null;
+let rolActual = null;
+let nvsDatos = []; // [{nv, cliente, vendedor, fecha(ISO), lineas:[{codigo,descripcion,um,cantidad}]}]
+let reclamosPostventa = [];
+let reclamoContador = 0;
+let SYNC_BIN_ID = localStorage.getItem('pv_sync_bin_id') || '6a6cf4b9f5f4af5e29db59ea';
+const SYNC_API_KEY = '$2a$10$U8z6AIOUslgzJvlVPbY/0e4AUgRBHFEpSQ0odo6LP.7rKqChiRVLC';
+let SYNC_ACTIVO = !!SYNC_BIN_ID;
+const LS_KEY = 'postventa_pwa_estado';
+const LS_USUARIO_KEY = 'postventa_pwa_usuario';
+
+const CUENTAS_SEMILLA_VENDEDORES = {"GYAÑEZ": {"passwordHash": "1868d7a53f215e92d6b754310198b375b231f3b2dcec0a4ef07ea2ae9da4baab", "rol": "vendedor", "vendedorAsociado": "GISELLA YAÑEZ  ZONA SUR, YAÑEZ B. GISELA"}, "MCOVARRUBIAS": {"passwordHash": "2847471a0e6c3cdc58d630527c46af90901560194ccc9a11d43e2489312f00ed", "rol": "vendedor", "vendedorAsociado": "MERCEDES COVARRUBIAS"}, "LCUBILLOS": {"passwordHash": "31d974e5a761d40f8e258252752d9bc3e4eb821373e3bb1e7c9287e725c9a9f6", "rol": "vendedor", "vendedorAsociado": "CUBILLOS LUIS"}, "PGARCIA": {"passwordHash": "1718e039bde9c03d711fdb0729d5cc2121f86f515533a4e6004597045c12d1f0", "rol": "vendedor", "vendedorAsociado": "GARCIA SOTO PATRICIO"}, "AHIDALGO": {"passwordHash": "4f63521fa9acdf3f297cabfdaa27a4a060d3f70c4a9f2b6c960bc62378ac993b", "rol": "vendedor", "vendedorAsociado": "HIDALGO R. ANTONIO"}, "EHIDALGO": {"passwordHash": "ebdf4005ba77d31210c5b2ca5a7c95a8406015ebac496044032455e8ec9f218c", "rol": "vendedor", "vendedorAsociado": "HIDALGO EDUARDO"}, "FNAVARRETE": {"passwordHash": "a74c892da1454005f9d3d12459434752bbee1963798709c61b8fec07547e9d52", "rol": "vendedor", "vendedorAsociado": "NAVARRETE A. FERNANDO"}, "JORTIZ": {"passwordHash": "6bb3ef9f7772a4d37e45f4d15789da0b18023bec1a8042d9b54882c2d062278a", "rol": "vendedor", "vendedorAsociado": "ORTIZ JORGE"}, "IPOBLETE": {"passwordHash": "cc50a65ba152bba631d1eed4db9f312ab73419dd139e111c60a096b8b58d5d90", "rol": "vendedor", "vendedorAsociado": "POBLETE IVAN"}, "AREYES": {"passwordHash": "561658e682067a075a11a24f2259e0b7a2b00e6eb4268ea3540d48cc8639529b", "rol": "vendedor", "vendedorAsociado": "REYES ALEJANDRO"}, "HRIVEROS": {"passwordHash": "fdd964c1c12ddf737b916277a17c08a5027c1acdfa71d36ed3daa716ddf9966e", "rol": "vendedor", "vendedorAsociado": "RIVEROS ARMIJO HUGO"}, "LOFICINA": {"passwordHash": "7260ac566d3b9958bc7a3829b422f03f523b7e2e32b9df327b59488581359406", "rol": "vendedor", "vendedorAsociado": "OFICINA LT042019"}, "HJAIME": {"passwordHash": "0fe0a89024b2a78fed05eee07707ae79a464c54cff1f9006d584ce061420d2a2", "rol": "vendedor", "vendedorAsociado": "JAIME HORMANN"}, "XMSODIMAC": {"passwordHash": "4d7a2fc2aa421fc00bbf3f1ef1737018391c1a5731f9638f9ae31e5bce04c665", "rol": "vendedor", "vendedorAsociado": "SODIMAC EMPRESAS X.MARTINEZ"}, "VTORO": {"passwordHash": "bd5c3e2e7d8304cbf37fe7cb4b10de24bc480fca2552cb519b1e64a79747210e", "rol": "vendedor", "vendedorAsociado": "TORO L. VIRGINIA"}, "FREED": {"passwordHash": "37e585f36bd4f641c080a7a41f21e91d0faef4b0125d9b72c371cbda4c7e474a", "rol": "vendedor", "vendedorAsociado": "REED FELIPE"}, "EGUERRERO": {"passwordHash": "3ac46db438bfc18ac3487948a84f4e55c9639b5b15a341cccb6206d035dc7c59", "rol": "vendedor", "vendedorAsociado": "GUERRERO U. EDUARDO"}, "MMUNIZAGA": {"passwordHash": "d46271fca4d6404dd691f50e000e21fb3000255971f6f477a5bfa1db90504e84", "rol": "vendedor", "vendedorAsociado": "MUNIZAGA R. MAURICIO"}, "AGRICOLA": {"passwordHash": "1929c7c2c8006cdd67bf4820f0d62dc6dde56158958915cd4ae3cebc476a77cc", "rol": "vendedor", "vendedorAsociado": "AGRICOLA"}, "COMUNICACION": {"passwordHash": "92d2403be7bf48e127bab5240d456ddfb4ac8355473ea562c76b2f5e224690c9", "rol": "vendedor", "vendedorAsociado": "COMUNICACION"}, "EXPORTACION": {"passwordHash": "18612aacbde4bca06c72cb46da38d629a4ef93d7675f34131fd7f424ad381561", "rol": "vendedor", "vendedorAsociado": "EXPORTACION"}, "GAS": {"passwordHash": "9c1d09e294f8806b506dd724811efa51640331444294685cd128fe14ff50baaf", "rol": "vendedor", "vendedorAsociado": "GAS"}, "OHDPE": {"passwordHash": "577cf6d832a72e3d847fb4f13195c07e4eb0e86e07c598eb13c597ab6dee02a2", "rol": "vendedor", "vendedorAsociado": "OFICINA HDPE"}, "OBALSAS": {"passwordHash": "c8e398ce46c67efa08381fb871a401f6eddc623607ab38491aa2e24fd793d196", "rol": "vendedor", "vendedorAsociado": "OFICINA BALSAS"}, "RBASCUÑAN": {"passwordHash": "d0d39e2201577a0fa70e606ca69c9463564651e46c564f45a1dca2970d47e571", "rol": "vendedor", "vendedorAsociado": "BASCUÑAN Z. ROSA"}, "PETROFLEX": {"passwordHash": "2ce3a107dca493f2a9c702ef6b58f6b6cbc6dd239b5a2a7ccb6fb4dd326d95ab", "rol": "vendedor", "vendedorAsociado": "OFICINA PETROFLEX"}, "XMARTINEZ": {"passwordHash": "887dbae8214cae140c0fc8483efd6b39063ef4f681d8ccdd6b2e514ec6e7cc42", "rol": "vendedor", "vendedorAsociado": "MARTINEZ M. XIMENA"}, "MATERIASPRIMAS": {"passwordHash": "0adf79ad8bd2c538dd64874fc6748ac68312ade8cf0de77f952d3102570e74f5", "rol": "vendedor", "vendedorAsociado": "MATERIAS PRIMAS"}, "MINERAS": {"passwordHash": "855247ca3269a32d599b229f888a783b07f4bb9068253a77bc1ac3b65889f2e2", "rol": "vendedor", "vendedorAsociado": "MINERAS I"}, "SANITARIAS": {"passwordHash": "f3008edb42acbefe4d3be624a373986001113523df8a17c00862d11e338ed560", "rol": "vendedor", "vendedorAsociado": "SANITARIAS"}, "SERVICIOS": {"passwordHash": "014eebce41793fe249405ebb5e456787aac08c3d6f8c2ff76553d387d364654c", "rol": "vendedor", "vendedorAsociado": "SERVICIOS"}, "EMPRESA": {"passwordHash": "8b55048787fb0ca8d0876ba7d1cbc00c4df46f170f7deb1c4dd4602fb43537b8", "rol": "vendedor", "vendedorAsociado": "EMPRESA"}, "AROMAN": {"passwordHash": "59e59f1085573a61abade860e4fe568dd9fe1e29ae74f0ff8086e06535ba3eec", "rol": "vendedor", "vendedorAsociado": "ROMAN ARQUEROS"}, "DISTRIBUIDOR": {"passwordHash": "c008dc1a086c3d4b0a0ece7f3f9b74a5d40b905681540b48beda5ef2eddd647f", "rol": "vendedor", "vendedorAsociado": "DISTRIBUIDOR SOLDAPLAST"}, "BKOCK": {"passwordHash": "87e1917ba210a0dcabb638a4725f76f3692f310fa17be5955156e558e9978316", "rol": "vendedor", "vendedorAsociado": "KOCK SCHURCH BRUNO"}, "EZUNINO": {"passwordHash": "ea65edb579685f4b37b2cf6953737bc5b7ebe27cccdc8f66eb690f48994982e0", "rol": "vendedor", "vendedorAsociado": "ZUNINO MEDINA ELENA"}, "TMARTINEZ": {"passwordHash": "c5e774d54ad57fec6a2f328150964990e88f50ef63e268a81bd400a6626d57bc", "rol": "vendedor", "vendedorAsociado": "MARTINEZ T. TAMARA"}, "IMIRALLES": {"passwordHash": "70903359976833c8e258318647ff6cc8ff15d13ca9b030e865faf6a4757d92fb", "rol": "vendedor", "vendedorAsociado": "MIRALLES IVETTE"}, "ERAMIREZ": {"passwordHash": "16d2aa9ff5e71ecd7f8b63e9d538b28974d8e27d7ee0ea7505c3a312d7891dd0", "rol": "vendedor", "vendedorAsociado": "RAMIREZ M. ELENA"}, "DOFICINA": {"passwordHash": "5403d715caa0347da113da4536413e0adf427d58cb66d9e80fc6a635f249e574", "rol": "vendedor", "vendedorAsociado": "OFICINA DA042019"}, "TMSODIMAC": {"passwordHash": "230ffcff5af3af78f217a76a7cd87d86732dc91ef7fe3d3cf86f5882ad1cbc09", "rol": "vendedor", "vendedorAsociado": "SODIMAC T. MARTINEZ"}, "OPVC": {"passwordHash": "b06168ab94eaf45aabc2983b894e1367610602cbbe0007d6b1fe47bd7d93fb72", "rol": "vendedor", "vendedorAsociado": "OFICINA PVC"}, "ANICOLETTI": {"passwordHash": "c710eb1810196da7673296e76138be434198eeb38a608e4793e62a7d279494d9", "rol": "vendedor", "vendedorAsociado": "A . NICOLETTI"}, "KAM": {"passwordHash": "b784d975c5c6fc33a8de8031b7f775f8262d03e169adb1f3f7e237d68301e6f2", "rol": "vendedor", "vendedorAsociado": "OFICINA KAM RETAIL"}, "OFACT072018": {"passwordHash": "b04a6536b91ada5ad8b87ea839b85523d2883793456f6ec43da3986553a4b48c", "rol": "vendedor", "vendedorAsociado": "OFICINA ACTUALIZACION 072018"}, "LROA": {"passwordHash": "ed4d7ea81ba54d040529f752c821cc65cc906b12ef0ede5e5049ede4793478ed", "rol": "vendedor", "vendedorAsociado": "ROA C. LILIAN"}, "OFACT062022": {"passwordHash": "b04a6536b91ada5ad8b87ea839b85523d2883793456f6ec43da3986553a4b48c", "rol": "vendedor", "vendedorAsociado": "OFICINA ACTUALIZACION 062022"}, "CHERNAN": {"passwordHash": "1bd6f26df1275df512075be7c171b49d365aa3c300462d92461cff648e191bef", "rol": "vendedor", "vendedorAsociado": "HERNAN CARRASCO"}, "STORRES": {"passwordHash": "20f745e5bd5647c90566c4588d5b628ef897da442435afd679e1c725d30b52c2", "rol": "vendedor", "vendedorAsociado": "TORRES S. SEBASTIAN"}, "JTORO": {"passwordHash": "a39f42da4761957bdecbaeec025f18f2024c4abfe0558a47bdb62854d728e244", "rol": "vendedor", "vendedorAsociado": "TORO J. JUAN"}, "AVILCHES": {"passwordHash": "5ebb21f5d5ff54ddf5feabc6606a1c3c786d4bb4837be7c3a93d431298a3e9d6", "rol": "vendedor", "vendedorAsociado": "VILCHES C. ADRIAN"}, "SUBILLA": {"passwordHash": "696037c9b79cea8988e3b542c6176ff562ef4529de1838681be55a8f22ddf295", "rol": "vendedor", "vendedorAsociado": "UBILLA D. SERGIO"}, "JDIAZ": {"passwordHash": "a3daf83c06054aff48a238f987104c0e37e7c7bb1cc1ae2509211b5aadb37692", "rol": "vendedor", "vendedorAsociado": "DIAZ B. JAIME"}, "XFUENTES": {"passwordHash": "9752110b9f6b9b44609c019e6d2d24b929a491c2fc691913398efecd64c1ead5", "rol": "vendedor", "vendedorAsociado": "FUENTES M. XIMENA"}, "RDELGADO": {"passwordHash": "9b5755aec05942ac4fdb25151f03e2e7b962dfa108aeed999ffb4023c158de9b", "rol": "vendedor", "vendedorAsociado": "LOGISTICA"}, "NCHAPARRO": {"passwordHash": "5f4dd6e9c5718d875ed0d6bcdc15e6260c287e8595ef0b7545c1ee6f3606a986", "rol": "vendedor", "vendedorAsociado": "LOGISTICA"}, "JGONZALEZ": {"passwordHash": "478ad1c60ff09b6571cff18a4243849623bd99e1c29dbdb81bb887d5f1db0d44", "rol": "vendedor", "vendedorAsociado": "LOGISTICA"}, "JSOTO": {"passwordHash": "62b0135636e2d39409a4252ae221d7907bdc3a26403961593d374b8e92424d91", "rol": "vendedor", "vendedorAsociado": "LOGISTICA"}, "AGALLEGOS": {"passwordHash": "5b0c5c4b6946b2a93f99409c1f811e990f98a073604aaf5149689d2f6176e31c", "rol": "vendedor", "vendedorAsociado": "LOGISTICA"}, "MPERALTA": {"passwordHash": "28924aa355fe6911352085def14272b3c11f477a9e7ca1c03b00a3b2fddd4323", "rol": "vendedor", "vendedorAsociado": "LOGISTICA"}, "RGONZALEZ": {"passwordHash": "f5b7143928b642d32d6c3c912a0c3c13951f62c9a0fe1586320423efb9c15b69", "rol": "vendedor", "vendedorAsociado": "LOGISTICA"}, "CLYON": {"passwordHash": "85b3ea8a5c84ea31592b48207ca69d6fd2f4cf5dffaafd0575d28b3e7496375b", "rol": "vendedor", "vendedorAsociado": "LOGISTICA"}};
+const TIPO_RECLAMO_LABEL = { calidad:'Calidad', falta_material:'Falta de material', otro:'Otro' };
+const ESTADO_RECLAMO_LABEL = { pendiente:'Pendiente', aprobado:'Aprobado — en revisión', rechazado:'Rechazado', cerrado:'Cerrado' };
+const ESTADO_RECLAMO_PILL = { pendiente:'warn', aprobado:'', rechazado:'alert', cerrado:'ok' };
+
+// ==================== Utilidades ====================
+async function hashPassword(pw){
+  const enc = new TextEncoder().encode(pw);
+  const buf = await crypto.subtle.digest('SHA-256', enc);
+  return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+function fmt(n, dec){
+  if(n===null||n===undefined||isNaN(n)) return '-';
+  return Number(n).toLocaleString('es-CL', {minimumFractionDigits:dec, maximumFractionDigits:dec});
+}
+function comoFechaISO(v){
+  if(!v) return '';
+  const d = v instanceof Date ? v : new Date(v);
+  if(isNaN(d.getTime())) return '';
+  return d.toISOString().split('T')[0];
+}
+function esAdmin(){ return rolActual === 'admin'; }
+function puedeVerTodasNV(){ return esAdmin(); }
+function miVendedor(){ return (cuentas[usuarioActual]||{}).vendedorAsociado || ''; }
+// Una cuenta puede tener más de un "Vendedor asociado" (ej: la misma persona
+// con dos códigos de vendedor distintos en el ERP), separados por coma.
+function nvPerteneceAMiVendedor(nvVendedor){
+  const propios = miVendedor().split(',').map(v=>v.trim().toLowerCase()).filter(Boolean);
+  return propios.includes((nvVendedor||'').trim().toLowerCase());
+}
+// Un vendedor solo puede accionar reclamos que él mismo generó.
+function puedeVerReclamo(r){
+  if(esAdmin()) return true;
+  return r.usuarioSolicitante === usuarioActual;
+}
+
+// ==================== Persistencia local ====================
+function estadoCompartido(){
+  return { cuentas, nvsDatos, reclamosPostventa, reclamoContador };
+}
+function guardarEstadoLocal(){
+  try{ localStorage.setItem(LS_KEY, JSON.stringify(estadoCompartido())); }catch(e){ console.warn('No se pudo guardar local:', e); }
+}
+function cargarEstadoLocal(){
+  try{
+    const raw = localStorage.getItem(LS_KEY);
+    if(!raw) return;
+    const data = JSON.parse(raw);
+    if(data.cuentas) cuentas = data.cuentas;
+    if(data.nvsDatos) nvsDatos = data.nvsDatos;
+    if(data.reclamosPostventa) reclamosPostventa = data.reclamosPostventa;
+    if(data.reclamoContador) reclamoContador = data.reclamoContador;
+  }catch(e){ console.warn('No se pudo cargar local:', e); }
+}
+function mergePorClave(local, nube, clave){
+  const map = new Map();
+  (nube||[]).forEach(item => map.set(item[clave], item));
+  (local||[]).forEach(item => map.set(item[clave], item)); // local pisa a la nube en empates
+  return [...map.values()];
+}
+function mergeObjetos(local, nube){
+  return { ...(nube||{}), ...(local||{}) };
+}
+async function guardarEstado(){
+  guardarEstadoLocal();
+  if(SYNC_ACTIVO && SYNC_BIN_ID){
+    try{
+      await fetch(`https://api.jsonbin.io/v3/b/${SYNC_BIN_ID}`, {
+        method:'PUT',
+        headers:{ 'Content-Type':'application/json', 'X-Master-Key':SYNC_API_KEY },
+        body: JSON.stringify(estadoCompartido())
+      });
+    }catch(e){ console.warn('No se pudo sincronizar:', e); }
+  }
+}
+async function syncPull(){
+  if(!SYNC_ACTIVO || !SYNC_BIN_ID) return;
+  try{
+    const resp = await fetch(`https://api.jsonbin.io/v3/b/${SYNC_BIN_ID}/latest`, { headers:{ 'X-Master-Key':SYNC_API_KEY } });
+    const json = await resp.json();
+    const data = json.record;
+    if(!data) return;
+    if(data.cuentas) cuentas = mergeObjetos(cuentas, data.cuentas);
+    if(data.nvsDatos && data.nvsDatos.length) nvsDatos = data.nvsDatos;
+    if(data.reclamosPostventa) reclamosPostventa = mergePorClave(reclamosPostventa, data.reclamosPostventa, 'id');
+    if(data.reclamoContador) reclamoContador = Math.max(reclamoContador, data.reclamoContador);
+    guardarEstadoLocal();
+    renderTodo();
+  }catch(e){ console.warn('No se pudo traer datos de la nube:', e); }
+}
+setInterval(syncPull, 60000);
+
+// ==================== Login ====================
+async function bootstrapAdmin(){
+  if(Object.keys(cuentas).length === 0){
+    cuentas['admin'] = { passwordHash: await hashPassword('admin123'), rol:'admin', vendedorAsociado:'' };
+    guardarEstadoLocal();
+  }
+}
+document.getElementById('toggleLoginClave').addEventListener('click', () => {
+  const input = document.getElementById('loginClave');
+  const btn = document.getElementById('toggleLoginClave');
+  if(input.type === 'password'){ input.type = 'text'; btn.textContent = '🙈'; }
+  else { input.type = 'password'; btn.textContent = '👁'; }
+});
+document.querySelectorAll('.pwd-toggle[data-target]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const input = document.getElementById(btn.dataset.target);
+    if(input.type === 'password'){ input.type = 'text'; btn.textContent = '🙈'; }
+    else { input.type = 'password'; btn.textContent = '👁'; }
+  });
+});
+document.getElementById('btnLogin').addEventListener('click', intentarLogin);
+document.getElementById('loginClave').addEventListener('keydown', (e) => { if(e.key==='Enter') intentarLogin(); });
+async function intentarLogin(){
+  const usuario = document.getElementById('loginUsuario').value.trim();
+  const clave = document.getElementById('loginClave').value;
+  const errEl = document.getElementById('loginError');
+  errEl.textContent = '';
+  if(!usuario || !clave){ errEl.textContent = 'Ingresa usuario y clave.'; return; }
+  const cuenta = cuentas[usuario];
+  if(!cuenta){ errEl.textContent = 'Usuario o clave incorrectos.'; return; }
+  const hash = await hashPassword(clave);
+  if(hash !== cuenta.passwordHash){ errEl.textContent = 'Usuario o clave incorrectos.'; return; }
+  usuarioActual = usuario;
+  rolActual = cuenta.rol;
+  localStorage.setItem(LS_USUARIO_KEY, usuario);
+  entrarApp();
+}
+document.getElementById('btnCerrarSesion').addEventListener('click', () => {
+  usuarioActual = null; rolActual = null;
+  localStorage.removeItem(LS_USUARIO_KEY);
+  document.getElementById('appWrap').style.display = 'none';
+  document.getElementById('loginScreen').style.display = 'flex';
+  document.getElementById('loginUsuario').value = '';
+  document.getElementById('loginClave').value = '';
+});
+function entrarApp(){
+  document.getElementById('loginScreen').style.display = 'none';
+  document.getElementById('appWrap').style.display = 'block';
+  document.getElementById('usuarioActualLbl').textContent = `${usuarioActual} (${rolActual==='admin'?'Administrador':'Vendedor'})`;
+  document.querySelectorAll('.admin-only').forEach(el => el.style.display = esAdmin() ? '' : 'none');
+  document.getElementById('hintBuscarNV').textContent = esAdmin()
+    ? 'Escribe el número de Nota de Venta y busca — como Admin puedes ver cualquier NV.'
+    : `Escribe el número de Nota de Venta y busca — solo puedes ver NV de tu propio vendedor (${miVendedor()||'sin asignar'}).`;
+  document.querySelector('#tabs button[data-tab="nueva"]').click();
+  renderTodo();
+}
+function renderTodo(){
+  renderPendientes();
+  renderRevision();
+  renderHistorial();
+  renderUsuarios();
+  renderStatsImportNV();
+  renderSyncStatus();
+}
+
+// ==================== Navegación ====================
+document.querySelectorAll('#tabs button[data-tab]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#tabs button').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('.tab').forEach(t=>t.style.display='none');
+    document.getElementById('tab-'+btn.dataset.tab).style.display='block';
+  });
+});
+
+// ==================== Postventa: búsqueda y nueva solicitud ====================
+document.getElementById('btnBuscarNV').addEventListener('click', buscarDocumentoNV);
+document.getElementById('buscarNVInput').addEventListener('keydown', (e)=>{ if(e.key==='Enter') buscarDocumentoNV(); });
+function buscarDocumentoNV(){
+  const numero = document.getElementById('buscarNVInput').value.trim();
+  const cont = document.getElementById('resultadoBusquedaNV');
+  if(!numero){ cont.innerHTML = '<p class="hint">Ingresa un número de NV.</p>'; return; }
+  const nvData = nvsDatos.find(x => String(x.nv) === numero);
+  if(!nvData){
+    cont.innerHTML = `<p class="hint">No se encontró la NV ${numero}. ${esAdmin() ? 'Puede que falte importarla en "Importar NV".' : 'Puede que no esté cargada, o que no sea tuya.'}</p>`;
+    return;
+  }
+  if(!esAdmin() && !nvPerteneceAMiVendedor(nvData.vendedor)){
+    cont.innerHTML = `<p class="hint">La NV ${numero} no está asociada a tu usuario — no puedes generar una solicitud de Postventa para ella.</p>`;
+    return;
+  }
+  const encabezado = `<div class="small-note" style="margin-bottom:10px;">Cliente: <strong>${nvData.cliente||'-'}</strong> · Vendedor: <strong>${nvData.vendedor||'-'}</strong> · Fecha: <strong>${nvData.fecha?new Date(nvData.fecha).toLocaleDateString('es-CL'):'-'}</strong></div>`;
+  const filasLineas = nvData.lineas.map((l,idx) => `
+    <tr>
+      <td><input type="checkbox" class="chkLineaNV" value="${idx}"></td>
+      <td>${l.codigo}</td>
+      <td>${l.descripcion||''}</td>
+      <td>${l.um||''}</td>
+      <td><input type="number" step="0.01" class="cantidadLineaNV" data-idx="${idx}" value="${fmt(Number(l.cantidad)||0,2)}" style="width:100px;"></td>
+    </tr>`).join('');
+  cont.innerHTML = `
+    ${encabezado}
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th></th><th>Código</th><th>Descripción</th><th>UM</th><th>Cantidad</th></tr></thead>
+        <tbody>${filasLineas}</tbody>
+      </table>
+    </div>
+    <div class="row" style="margin-top:14px;gap:16px;align-items:flex-start;">
+      <div>
+        <label class="hint" style="display:block;margin-bottom:4px;">Tipo de reclamo</label>
+        <select id="tipoReclamoSel">
+          <option value="calidad">Calidad</option>
+          <option value="falta_material">Falta de material</option>
+          <option value="otro">Otro</option>
+        </select>
+      </div>
+      <div style="flex:1;min-width:260px;">
+        <label class="hint" style="display:block;margin-bottom:4px;">Detalle del reclamo</label>
+        <textarea id="motivoReclamo" rows="3" placeholder="Describe qué pasó..."></textarea>
+      </div>
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <div>
+        <label class="hint" style="display:block;margin-bottom:4px;">Adjuntar foto o archivo (imagen, PDF o Excel) — opcional</label>
+        <input type="file" id="archivoReclamo" accept="image/*,.pdf,.xls,.xlsx,.csv">
+      </div>
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <button class="btn" id="btnEnviarReclamo">Enviar solicitud de Postventa</button>
+      <span id="envioReclamoStatus" class="hint"></span>
+    </div>
+  `;
+  window.__busquedaNVActual = { nv: numero, data: nvData };
+  document.getElementById('btnEnviarReclamo').addEventListener('click', enviarSolicitud);
+}
+const LIMITE_ADJUNTO_BYTES = 4*1024*1024;
+function leerArchivoAdjunto(inputEl){
+  return new Promise((resolve, reject) => {
+    const file = inputEl.files && inputEl.files[0];
+    if(!file){ resolve(null); return; }
+    if(file.size > LIMITE_ADJUNTO_BYTES){
+      alert(`El archivo "${file.name}" pesa ${(file.size/1024/1024).toFixed(1)}MB — el máximo permitido es 4MB.`);
+      reject(new Error('archivo_muy_pesado'));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => resolve({ nombre:file.name, tipo:file.type, dataUrl:reader.result });
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+async function enviarSolicitud(){
+  const ctx = window.__busquedaNVActual;
+  const status = document.getElementById('envioReclamoStatus');
+  if(!ctx) return;
+  const idxs = [...document.querySelectorAll('.chkLineaNV:checked')].map(c => parseInt(c.value));
+  if(!idxs.length){ status.textContent = 'Selecciona al menos un código.'; return; }
+  const motivo = document.getElementById('motivoReclamo').value.trim();
+  if(!motivo){ status.textContent = 'Describe el motivo del reclamo.'; return; }
+  const tipoReclamo = document.getElementById('tipoReclamoSel').value;
+  let archivo;
+  try{ archivo = await leerArchivoAdjunto(document.getElementById('archivoReclamo')); }catch(e){ return; }
+  const items = idxs.map(idx => {
+    const l = ctx.data.lineas[idx];
+    const cantInput = document.querySelector(`.cantidadLineaNV[data-idx="${idx}"]`);
+    return { codigo:l.codigo, descripcion:l.descripcion||'', um:l.um||'', cantidad: parseFloat(cantInput.value)||0 };
+  });
+  reclamoContador += 1;
+  reclamosPostventa.push({
+    id: `${Date.now()}_${Math.random().toString(36).slice(2,8)}`,
+    numero: `REC-${String(reclamoContador).padStart(3,'0')}`,
+    fecha: new Date().toISOString(),
+    usuarioSolicitante: usuarioActual,
+    nv: ctx.nv, cliente: ctx.data.cliente||'', vendedor: ctx.data.vendedor||'',
+    items, tipoReclamo, motivo, archivo,
+    estado:'pendiente', revisadoPor:null, fechaRevision:null, notaRevision:'',
+    numeroNotaCredito:'', fechaCierre:null, usuarioCierre:null
+  });
+  guardarEstado();
+  status.textContent = `Solicitud enviada — quedó pendiente de aprobación.`;
+  document.getElementById('resultadoBusquedaNV').innerHTML = '';
+  document.getElementById('buscarNVInput').value = '';
+  renderPendientes();
+}
+
+// ==================== Tarjetas de reclamo (compartidas) ====================
+function renderTarjetaReclamo(r, contexto){
+  const filasItems = r.items.map(it => `<tr><td>${it.codigo}</td><td>${it.descripcion}</td><td>${it.um}</td><td>${fmt(it.cantidad,2)}</td></tr>`).join('');
+  const diasPendiente = contexto==='pendiente' ? Math.floor((Date.now()-new Date(r.fecha).getTime())/86400000) : null;
+  const badgeDias = diasPendiente!==null ? `<span class="pill ${diasPendiente>=3?'alert':(diasPendiente>=1?'warn':'ok')}" style="margin-left:6px;">${diasPendiente===0?'Hoy':diasPendiente+' día'+(diasPendiente===1?'':'s')+' sin responder'}</span>` : '';
+  let acciones = '';
+  if(contexto==='pendiente' && esAdmin()){
+    acciones = `<button class="btn" onclick="aprobarReclamo('${r.id}')">Aprobar</button>
+      <button class="btn danger" onclick="rechazarReclamo('${r.id}')">Rechazar</button>`;
+  } else if(contexto==='revision' && esAdmin()){
+    acciones = `
+      <div style="margin-top:8px;">
+        <label class="hint" style="display:block;margin-bottom:3px;">Conclusiones / notas de la revisión</label>
+        <textarea rows="2" onchange="cambiarNotaRevision('${r.id}', this.value)">${r.notaRevision||''}</textarea>
+      </div>
+      <div class="row" style="margin-top:8px;gap:10px;align-items:end;">
+        <div>
+          <label class="hint" style="display:block;margin-bottom:3px;">N° de Solicitud de Nota de Crédito</label>
+          <input type="text" id="ncInput_${r.id}" value="${r.numeroNotaCredito||''}" style="width:160px;">
+        </div>
+        <button class="btn" onclick="cerrarReclamo('${r.id}')">Cerrar solicitud</button>
+      </div>`;
+  }
+  return `<div style="border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:12px;">
+    <div class="row" style="justify-content:space-between;flex-wrap:wrap;">
+      <div>
+        <strong style="color:var(--navy);">${r.numero}</strong> <span class="pill ${ESTADO_RECLAMO_PILL[r.estado]}">${ESTADO_RECLAMO_LABEL[r.estado]}</span>${badgeDias}
+        <div class="small-note">NV ${r.nv} · Cliente: ${r.cliente||'-'}</div>
+        <div class="small-note">Solicitado por ${r.usuarioSolicitante} — ${new Date(r.fecha).toLocaleString('es-CL')}</div>
+        <div class="small-note">Tipo de reclamo: <strong>${TIPO_RECLAMO_LABEL[r.tipoReclamo]}</strong></div>
+      </div>
+    </div>
+    <div class="small-note" style="margin-top:6px;">${r.motivo}</div>
+    ${r.archivo ? `<div style="margin-top:6px;"><a href="${r.archivo.dataUrl}" download="${r.archivo.nombre}" target="_blank" class="pill" style="text-decoration:none;">📎 ${r.archivo.nombre}</a></div>` : ''}
+    <table style="margin-top:8px;">
+      <thead><tr><th>Código</th><th>Descripción</th><th>UM</th><th>Cantidad</th></tr></thead>
+      <tbody>${filasItems}</tbody>
+    </table>
+    ${r.estado==='rechazado' ? `<div class="small-note" style="margin-top:6px;">Rechazado por ${r.revisadoPor} — ${new Date(r.fechaRevision).toLocaleString('es-CL')}${r.notaRevision?': '+r.notaRevision:''}</div>` : ''}
+    ${r.estado==='cerrado' ? `<div class="small-note" style="margin-top:6px;">Cerrado por ${r.usuarioCierre} — ${new Date(r.fechaCierre).toLocaleString('es-CL')} · N° Sol. NC: <strong>${r.numeroNotaCredito}</strong></div>` : ''}
+    <div style="margin-top:10px;">${acciones}</div>
+  </div>`;
+}
+function renderPendientes(){
+  const cont = document.getElementById('listaPendientes');
+  const empty = document.getElementById('emptyPendientes');
+  if(!cont) return;
+  let lista = reclamosPostventa.filter(r => r.estado==='pendiente' && puedeVerReclamo(r));
+  lista.sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||''));
+  if(!lista.length){ cont.innerHTML=''; empty.style.display='block'; return; }
+  empty.style.display = 'none';
+  cont.innerHTML = lista.map(r => renderTarjetaReclamo(r,'pendiente')).join('');
+}
+function renderRevision(){
+  const cont = document.getElementById('listaRevision');
+  const empty = document.getElementById('emptyRevision');
+  if(!cont) return;
+  let lista = reclamosPostventa.filter(r => r.estado==='aprobado' && puedeVerReclamo(r));
+  lista.sort((a,b)=>(a.fechaRevision||'').localeCompare(b.fechaRevision||''));
+  if(!lista.length){ cont.innerHTML=''; empty.style.display='block'; return; }
+  empty.style.display = 'none';
+  cont.innerHTML = lista.map(r => renderTarjetaReclamo(r,'revision')).join('');
+}
+function renderHistorial(){
+  const tbody = document.getElementById('tbodyHistorial');
+  const empty = document.getElementById('emptyHistorial');
+  if(!tbody) return;
+  let lista = reclamosPostventa.filter(r => (r.estado==='cerrado'||r.estado==='rechazado') && puedeVerReclamo(r));
+  const fNV = (document.getElementById('filtroHistNV').value||'').trim().toLowerCase();
+  const fEstado = document.getElementById('filtroHistEstado').value;
+  lista = lista.filter(r => {
+    if(fNV && !String(r.nv).toLowerCase().includes(fNV)) return false;
+    if(fEstado && r.estado!==fEstado) return false;
+    return true;
+  });
+  lista.sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+  if(!lista.length){ tbody.innerHTML=''; empty.style.display='block'; return; }
+  empty.style.display = 'none';
+  tbody.innerHTML = lista.map(r => `<tr>
+    <td>${r.numero}</td><td>${new Date(r.fecha).toLocaleDateString('es-CL')}</td><td>${r.nv}</td>
+    <td>${r.cliente||'-'}</td><td>${r.usuarioSolicitante}</td><td>${TIPO_RECLAMO_LABEL[r.tipoReclamo]}</td>
+    <td><span class="pill ${ESTADO_RECLAMO_PILL[r.estado]}">${ESTADO_RECLAMO_LABEL[r.estado]}</span></td>
+    <td>${r.numeroNotaCredito||'-'}</td>
+  </tr>`).join('');
+}
+document.getElementById('filtroHistNV').addEventListener('input', renderHistorial);
+document.getElementById('filtroHistEstado').addEventListener('change', renderHistorial);
+function aprobarReclamo(id){
+  if(!esAdmin()) return;
+  const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
+  r.estado='aprobado'; r.revisadoPor=usuarioActual; r.fechaRevision=new Date().toISOString();
+  guardarEstado(); renderPendientes(); renderRevision();
+}
+function rechazarReclamo(id){
+  if(!esAdmin()) return;
+  const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
+  const nota = prompt('Motivo del rechazo (opcional):','') || '';
+  r.estado='rechazado'; r.revisadoPor=usuarioActual; r.fechaRevision=new Date().toISOString(); r.notaRevision=nota;
+  guardarEstado(); renderPendientes(); renderHistorial();
+}
+function cambiarNotaRevision(id, valor){
+  const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
+  r.notaRevision = valor; guardarEstado();
+}
+function cerrarReclamo(id){
+  if(!esAdmin()) return;
+  const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
+  const nc = document.getElementById(`ncInput_${id}`).value.trim();
+  if(!nc){ alert('Ingresa el N° de Solicitud de Nota de Crédito para poder cerrar.'); return; }
+  r.numeroNotaCredito=nc; r.estado='cerrado'; r.fechaCierre=new Date().toISOString(); r.usuarioCierre=usuarioActual;
+  guardarEstado(); renderRevision(); renderHistorial();
+}
+
+// ==================== Importar NV (admin) ====================
+document.getElementById('btnProcesarNV').addEventListener('click', () => {
+  const input = document.getElementById('fileInputNV');
+  const status = document.getElementById('importNVStatus');
+  if(!input.files.length){ status.textContent = 'Selecciona un archivo primero.'; return; }
+  const file = input.files[0];
+  status.textContent = 'Procesando...';
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try{
+      const data = new Uint8Array(e.target.result);
+      const wb = XLSX.read(data, {type:'array', cellDates:true});
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, {range:6, defval:null}); // encabezados en fila 7
+      procesarFilasNV(rows);
+      status.textContent = `Procesado (${file.name}) — ${new Date().toLocaleTimeString('es-CL')}`;
+    }catch(err){
+      console.error(err);
+      status.textContent = 'No se pudo leer el archivo — revisa que sea el formato correcto.';
+    }
+  };
+  reader.readAsArrayBuffer(file);
+});
+function procesarFilasNV(rows){
+  const porNV = {};
+  rows.forEach(row => {
+    const nv = row['nvnumero'];
+    if(nv===null || nv===undefined || nv==='') return;
+    const key = String(nv).trim();
+    if(!porNV[key]){
+      porNV[key] = {
+        nv: key,
+        cliente: (row['NomAux']||'').toString().trim(),
+        vendedor: (row['VenDes']||'').toString().trim(),
+        fecha: comoFechaISO(row['fecha_emis']) || null,
+        lineas: []
+      };
+    }
+    if(row['CodProd']){
+      porNV[key].lineas.push({
+        codigo: String(row['CodProd']).trim(),
+        descripcion: (row['DesProd']||'').toString().trim(),
+        um: (row['CodUMed']||'').toString().trim(),
+        cantidad: Number(row['Pedido'])||0
+      });
+    }
+  });
+  nvsDatos = Object.values(porNV);
+  guardarEstado();
+  renderStatsImportNV();
+}
+function renderStatsImportNV(){
+  const cont = document.getElementById('statsImportNV');
+  if(!cont) return;
+  const totalLineas = nvsDatos.reduce((s,n)=>s+n.lineas.length,0);
+  cont.innerHTML = `
+    <div class="stat"><div class="num">${nvsDatos.length}</div><div class="lbl">NV cargadas</div></div>
+    <div class="stat"><div class="num">${totalLineas}</div><div class="lbl">Líneas de detalle</div></div>
+    <div class="stat"><div class="num">${new Set(nvsDatos.map(n=>n.vendedor).filter(Boolean)).size}</div><div class="lbl">Vendedores distintos</div></div>
+  `;
+}
+
+// ==================== Usuarios (admin) ====================
+function renderUsuarios(){
+  const tbody = document.getElementById('tbodyUsuarios');
+  if(!tbody) return;
+  tbody.innerHTML = Object.keys(cuentas).sort().map(u => {
+    const c = cuentas[u];
+    return `<tr>
+      <td>${u}</td>
+      <td>${c.rol==='admin'?'Administrador':'Vendedor'}</td>
+      <td>${c.vendedorAsociado||'-'}</td>
+      <td>
+        <button class="btn secondary" style="padding:4px 9px;font-size:.72rem;" onclick="abrirCambiarClave('${u}')">Cambiar clave</button>
+        ${c.rol==='vendedor' ? `<button class="btn secondary" style="padding:4px 9px;font-size:.72rem;" onclick="abrirEditarVendedorAsociado('${u}')">Editar vendedor</button>` : ''}
+        ${u!==usuarioActual ? `<button class="btn danger" style="padding:4px 9px;font-size:.72rem;" onclick="eliminarUsuario('${u}')">Eliminar</button>` : ''}
+      </td>
+    </tr>`;
+  }).join('');
+}
+function abrirEditarVendedorAsociado(u){
+  if(!esAdmin()) return;
+  const actual = cuentas[u].vendedorAsociado || '';
+  const nuevo = prompt(`Vendedor(es) asociado(s) para "${u}" (sepáralos con coma si son varios):`, actual);
+  if(nuevo === null) return; // canceló
+  cuentas[u].vendedorAsociado = nuevo.trim();
+  guardarEstado();
+  renderUsuarios();
+}
+document.getElementById('btnCrearUsuario').addEventListener('click', async () => {
+  if(!esAdmin()) return;
+  const nombre = document.getElementById('nuevoUsuarioNombre').value.trim();
+  const clave = document.getElementById('nuevoUsuarioClave').value;
+  const rol = document.getElementById('nuevoUsuarioRol').value;
+  const vendedor = document.getElementById('nuevoUsuarioVendedor').value.trim();
+  const status = document.getElementById('crearUsuarioStatus');
+  if(!nombre || !clave){ status.textContent = 'Usuario y clave son obligatorios.'; return; }
+  if(cuentas[nombre]){ status.textContent = 'Ya existe un usuario con ese nombre.'; return; }
+  if(rol==='vendedor' && !vendedor){ status.textContent = 'Para un vendedor, indica el "Vendedor asociado" (tal como aparece en las NV).'; return; }
+  cuentas[nombre] = { passwordHash: await hashPassword(clave), rol, vendedorAsociado: rol==='vendedor'?vendedor:'' };
+  guardarEstado();
+  document.getElementById('nuevoUsuarioNombre').value = '';
+  document.getElementById('nuevoUsuarioClave').value = '';
+  document.getElementById('nuevoUsuarioVendedor').value = '';
+  status.textContent = `Usuario "${nombre}" creado.`;
+  renderUsuarios();
+});
+async function abrirCambiarClave(u){
+  if(!esAdmin()) return;
+  const nueva = prompt(`Nueva clave para "${u}":`);
+  if(!nueva) return;
+  cuentas[u].passwordHash = await hashPassword(nueva);
+  guardarEstado();
+  alert('Clave actualizada.');
+}
+function eliminarUsuario(u){
+  if(!esAdmin()) return;
+  if(u === usuarioActual){ alert('No puedes eliminar tu propio usuario.'); return; }
+  const admins = Object.values(cuentas).filter(c=>c.rol==='admin').length;
+  if(cuentas[u].rol==='admin' && admins<=1){ alert('Debe quedar al menos un Administrador.'); return; }
+  if(!confirm(`¿Eliminar el usuario "${u}"?`)) return;
+  delete cuentas[u];
+  guardarEstado();
+  renderUsuarios();
+}
+
+// ==================== Sincronización (admin) ====================
+function renderSyncStatus(){
+  const box = document.getElementById('syncStatusBox');
+  if(!box) return;
+  box.innerHTML = SYNC_ACTIVO
+    ? `<span class="pill ok">✓ Sincronización activa</span> — ID del bin: <code>${SYNC_BIN_ID}</code>. Este mismo ID debe quedar en el archivo que le repartas a todos los usuarios.`
+    : `<span class="pill warn">Sin sincronizar</span> — cada usuario vería solo lo que carga en su propio computador hasta que actives esto.`;
+}
+document.getElementById('btnCrearBinSync').addEventListener('click', async () => {
+  if(!esAdmin()) return;
+  try{
+    const resp = await fetch('https://api.jsonbin.io/v3/b', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'X-Master-Key':SYNC_API_KEY, 'X-Bin-Name':'postventa-pwa' },
+      body: JSON.stringify(estadoCompartido())
+    });
+    const json = await resp.json();
+    SYNC_BIN_ID = json?.metadata?.id;
+    if(!SYNC_BIN_ID){ alert('No se pudo crear el bin — revisa la consola.'); return; }
+    SYNC_ACTIVO = true;
+    localStorage.setItem('pv_sync_bin_id', SYNC_BIN_ID);
+    renderSyncStatus();
+    alert(`Sincronización activada. Anota este ID y avísale a Claude para que quede fijo en el archivo antes de repartirlo:\n\n${SYNC_BIN_ID}`);
+  }catch(e){ alert('Error creando el bin: ' + e.message); }
+});
+document.getElementById('btnUsarBinManual').addEventListener('click', () => {
+  if(!esAdmin()) return;
+  const id = document.getElementById('binIdManual').value.trim();
+  if(!id) return;
+  SYNC_BIN_ID = id;
+  SYNC_ACTIVO = true;
+  localStorage.setItem('pv_sync_bin_id', SYNC_BIN_ID);
+  renderSyncStatus();
+  syncPull();
+});
+
+// ==================== Init ====================
+// Agrega las cuentas de vendedores importadas SOLO si ese usuario todavía no
+// existe (ni localmente ni en la nube) — así nunca pisa una clave que ya se
+// haya cambiado después de la carga inicial. Si agrega algo nuevo, lo sube.
+async function sembrarCuentasVendedores(){
+  let huboCambios = false;
+  Object.keys(CUENTAS_SEMILLA_VENDEDORES).forEach(usuario => {
+    if(!cuentas[usuario]){
+      cuentas[usuario] = CUENTAS_SEMILLA_VENDEDORES[usuario];
+      huboCambios = true;
+    }
+  });
+  if(huboCambios) await guardarEstado();
+}
+(async function init(){
+  cargarEstadoLocal();
+  await bootstrapAdmin();
+  if(SYNC_ACTIVO) await syncPull();
+  await sembrarCuentasVendedores();
+  const usuarioGuardado = localStorage.getItem(LS_USUARIO_KEY);
+  if(usuarioGuardado && cuentas[usuarioGuardado]){
+    usuarioActual = usuarioGuardado;
+    rolActual = cuentas[usuarioGuardado].rol;
+    entrarApp();
+  }
+})();
+</script>
+</body>
+</html>
