@@ -125,6 +125,7 @@
     <button data-tab="importar">Importar NV</button>
     <button data-tab="usuarios">Usuarios</button>
     <button data-tab="motivos">Motivos Reclamo Post Venta</button>
+    <button data-tab="tiposreclamo">Tipo de Reclamo</button>
     <button data-tab="config">Sincronización</button>
   </nav>
 
@@ -251,6 +252,24 @@
       </div>
     </section>
 
+    <!-- TIPOS DE RECLAMO (admin) -->
+    <section id="tab-tiposreclamo" class="tab">
+      <div class="panel">
+        <h2>Tipo de Reclamo</h2>
+        <p class="hint">Estas son las opciones del desplegable "Tipo de reclamo" en "Nueva Solicitud". Agrega, edita o elimina según necesites.</p>
+        <div class="table-scroll" style="max-height:400px;">
+          <table>
+            <thead><tr><th>Tipo</th><th></th></tr></thead>
+            <tbody id="tbodyTiposReclamo"></tbody>
+          </table>
+        </div>
+        <div class="row" style="margin-top:10px;">
+          <input type="text" id="nuevoTipoReclamoTexto" placeholder="Nuevo tipo de reclamo...">
+          <button class="btn" id="btnAgregarTipoReclamo">Agregar</button>
+        </div>
+      </div>
+    </section>
+
     <!-- CONFIGURACIÓN SYNC (admin) -->
     <section id="tab-config" class="tab">
       <div class="panel">
@@ -277,6 +296,7 @@ let guiasDatos = []; // [{folio, fecha(ISO), factura, nv, cliente, vendedor, pat
 let reclamosPostventa = [];
 let reclamoContador = 0;
 let maestroMotivosReclamo = []; // [{id, motivo}]
+let maestroTiposReclamo = []; // [{id, tipo}]
 let SYNC_BIN_ID = localStorage.getItem('pv_sync_bin_id') || '6a70a17ff5f4af5e29e55574';
 const SYNC_API_KEY = '$2a$10$U8z6AIOUslgzJvlVPbY/0e4AUgRBHFEpSQ0odo6LP.7rKqChiRVLC';
 let SYNC_ACTIVO = !!SYNC_BIN_ID;
@@ -321,7 +341,7 @@ function puedeVerReclamo(r){
 
 // ==================== Persistencia local ====================
 function estadoCompartido(){
-  return { cuentas, guiasDatos, reclamosPostventa, reclamoContador, maestroMotivosReclamo };
+  return { cuentas, guiasDatos, reclamosPostventa, reclamoContador, maestroMotivosReclamo, maestroTiposReclamo };
 }
 function guardarEstadoLocal(){
   try{ localStorage.setItem(LS_KEY, JSON.stringify(estadoCompartido())); }catch(e){ console.warn('No se pudo guardar local:', e); }
@@ -336,6 +356,7 @@ function cargarEstadoLocal(){
     if(data.reclamosPostventa) reclamosPostventa = data.reclamosPostventa;
     if(data.reclamoContador) reclamoContador = data.reclamoContador;
     if(data.maestroMotivosReclamo) maestroMotivosReclamo = data.maestroMotivosReclamo;
+    if(data.maestroTiposReclamo) maestroTiposReclamo = data.maestroTiposReclamo;
   }catch(e){ console.warn('No se pudo cargar local:', e); }
 }
 function mergePorClave(local, nube, clave){
@@ -371,6 +392,7 @@ async function syncPull(){
     if(data.reclamosPostventa) reclamosPostventa = mergePorClave(reclamosPostventa, data.reclamosPostventa, 'id');
     if(data.reclamoContador) reclamoContador = Math.max(reclamoContador, data.reclamoContador);
     if(data.maestroMotivosReclamo) maestroMotivosReclamo = mergePorClave(maestroMotivosReclamo, data.maestroMotivosReclamo, 'id');
+    if(data.maestroTiposReclamo) maestroTiposReclamo = mergePorClave(maestroTiposReclamo, data.maestroTiposReclamo, 'id');
     guardarEstadoLocal();
     renderTodo();
   }catch(e){ console.warn('No se pudo traer datos de la nube:', e); }
@@ -441,21 +463,28 @@ function renderTodo(){
   renderStatsImportNV();
   renderSyncStatus();
   renderMotivosReclamo();
+  renderTiposReclamo();
 }
 
 // ==================== Navegación ====================
 document.querySelectorAll('#tabs button[data-tab], #subnavMaestro button[data-tab]').forEach(btn => {
   btn.addEventListener('click', () => {
+    // Si el botón vive dentro del submenú Maestro, ese se mantiene abierto;
+    // si es una pestaña normal, el submenú se cierra (si no, quedaba pegado
+    // en pantalla al cambiarse a otra pestaña como "Nueva Solicitud").
+    const vieneDeMaestro = !!btn.closest('#subnavMaestro');
+    if(!vieneDeMaestro) document.getElementById('subnavMaestro').style.display = 'none';
     document.querySelectorAll('#tabs button, #subnavMaestro button').forEach(b=>b.classList.remove('active'));
     btn.classList.add('active');
     document.querySelectorAll('.tab').forEach(t=>t.style.display='none');
     document.getElementById('tab-'+btn.dataset.tab).style.display='block';
     if(btn.dataset.tab==='motivos') renderMotivosReclamo();
+    if(btn.dataset.tab==='tiposreclamo') renderTiposReclamo();
     if(SECCIONES_MAESTRO.includes(btn.dataset.tab)) document.getElementById('navMaestro').classList.add('active');
     else document.getElementById('navMaestro').classList.remove('active');
   });
 });
-const SECCIONES_MAESTRO = ['importar','usuarios','motivos','config'];
+const SECCIONES_MAESTRO = ['importar','usuarios','motivos','tiposreclamo','config'];
 document.getElementById('navMaestro').addEventListener('click', () => {
   const sub = document.getElementById('subnavMaestro');
   const abrir = sub.style.display === 'none';
@@ -553,9 +582,7 @@ function mostrarFormularioGuia(guia){
       <div>
         <label class="hint" style="display:block;margin-bottom:4px;">Tipo de reclamo</label>
         <select id="tipoReclamoSel">
-          <option value="calidad">Calidad</option>
-          <option value="falta_material">Falta de material</option>
-          <option value="otro">Otro</option>
+          ${maestroTiposReclamo.map(t => `<option value="${t.tipo.replace(/"/g,'&quot;')}">${t.tipo}</option>`).join('')}
         </select>
       </div>
       <div style="flex:1;min-width:260px;">
@@ -667,7 +694,7 @@ function renderTarjetaReclamo(r, contexto){
         <div class="small-note">NV ${r.nv} · Guía N°: ${r.guiaFolio||'-'} · Factura: ${r.factura||'-'} · Cliente: ${r.cliente||'-'}</div>
         <div class="small-note">Patente: ${r.patente||'-'} · Retirado por: ${r.retiradoPor||'-'}</div>
         <div class="small-note">Solicitado por ${r.usuarioSolicitante} — ${new Date(r.fecha).toLocaleString('es-CL')}</div>
-        <div class="small-note">Tipo de reclamo: <strong>${TIPO_RECLAMO_LABEL[r.tipoReclamo]}</strong></div>
+        <div class="small-note">Tipo de reclamo: <strong>${TIPO_RECLAMO_LABEL[r.tipoReclamo] || r.tipoReclamo}</strong></div>
       </div>
     </div>
     <div class="small-note" style="margin-top:6px;">${r.motivo}</div>
@@ -718,7 +745,7 @@ function renderHistorial(){
   empty.style.display = 'none';
   tbody.innerHTML = lista.map(r => `<tr>
     <td>${r.numero}</td><td>${new Date(r.fecha).toLocaleDateString('es-CL')}</td><td>${r.nv}</td><td>${r.guiaFolio||'-'}</td>
-    <td>${r.cliente||'-'}</td><td>${r.usuarioSolicitante}</td><td>${TIPO_RECLAMO_LABEL[r.tipoReclamo]}</td>
+    <td>${r.cliente||'-'}</td><td>${r.usuarioSolicitante}</td><td>${TIPO_RECLAMO_LABEL[r.tipoReclamo] || r.tipoReclamo}</td>
     <td><span class="pill ${ESTADO_RECLAMO_PILL[r.estado]}">${ESTADO_RECLAMO_LABEL[r.estado]}</span></td>
     <td>${r.numeroNotaCredito||'-'}</td>
     <td>${esAdmin() ? `<button class="btn danger" style="padding:4px 8px;font-size:.72rem;" onclick="eliminarReclamo('${r.id}')">Eliminar</button>` : ''}</td>
@@ -938,6 +965,47 @@ async function sembrarMotivosPorDefecto(){
   await guardarEstado();
 }
 
+// ==================== Tipo de Reclamo (admin) ====================
+function renderTiposReclamo(){
+  const tbody = document.getElementById('tbodyTiposReclamo');
+  if(!tbody) return;
+  tbody.innerHTML = [...maestroTiposReclamo].sort((a,b)=>a.tipo.localeCompare(b.tipo)).map(t => `
+    <tr>
+      <td><input type="text" value="${(t.tipo||'').replace(/"/g,'&quot;')}" onchange="editarTipoReclamo('${t.id}', this.value)"></td>
+      <td><button class="btn danger" style="padding:4px 8px;font-size:.72rem;" onclick="eliminarTipoReclamo('${t.id}')">Eliminar</button></td>
+    </tr>`).join('');
+}
+function editarTipoReclamo(id, valor){
+  if(!esAdmin()) return;
+  const t = maestroTiposReclamo.find(x=>x.id===id);
+  if(!t) return;
+  t.tipo = valor.trim();
+  guardarEstado();
+}
+function eliminarTipoReclamo(id){
+  if(!esAdmin()) return;
+  if(!confirm('¿Eliminar este tipo de reclamo?')) return;
+  const idx = maestroTiposReclamo.findIndex(x=>x.id===id);
+  if(idx>=0) maestroTiposReclamo.splice(idx,1);
+  guardarEstado();
+  renderTiposReclamo();
+}
+document.getElementById('btnAgregarTipoReclamo').addEventListener('click', () => {
+  if(!esAdmin()) return;
+  const texto = document.getElementById('nuevoTipoReclamoTexto').value.trim();
+  if(!texto) return;
+  maestroTiposReclamo.push({ id:`t_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, tipo:texto });
+  document.getElementById('nuevoTipoReclamoTexto').value = '';
+  guardarEstado();
+  renderTiposReclamo();
+});
+async function sembrarTiposReclamoPorDefecto(){
+  if(maestroTiposReclamo.length) return;
+  const defecto = ['Calidad','Falta de material','Otro'];
+  maestroTiposReclamo = defecto.map((t,i)=>({ id:`t_def_${i+1}`, tipo:t }));
+  await guardarEstado();
+}
+
 // ==================== Sincronización (admin) ====================
 function renderSyncStatus(){
   const box = document.getElementById('syncStatusBox');
@@ -999,6 +1067,7 @@ async function sembrarCuentasVendedores(){
   if(SYNC_ACTIVO) await syncPull();
   await sembrarCuentasVendedores();
   await sembrarMotivosPorDefecto();
+  await sembrarTiposReclamoPorDefecto();
   const usuarioGuardado = localStorage.getItem(LS_USUARIO_KEY);
   if(usuarioGuardado && cuentas[usuarioGuardado]){
     usuarioActual = usuarioGuardado;
