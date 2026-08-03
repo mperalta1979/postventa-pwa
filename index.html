@@ -368,7 +368,41 @@ function mergePorClave(local, nube, clave){
 function mergeObjetos(local, nube){
   return { ...(nube||{}), ...(local||{}) };
 }
-async function guardarEstado(){
+// Trae el estado actual de la nube (sin tocar nada local). Devuelve null si
+// no hay sincronización activa o si falla la conexión.
+async function obtenerEstadoNube(){
+  if(!SYNC_ACTIVO || !SYNC_BIN_ID) return null;
+  try{
+    const resp = await fetch(`https://api.jsonbin.io/v3/b/${SYNC_BIN_ID}/latest`, { headers:{ 'X-Master-Key':SYNC_API_KEY } });
+    const json = await resp.json();
+    return json.record || null;
+  }catch(e){ console.warn('No se pudo traer datos de la nube:', e); return null; }
+}
+// Combina lo que haya en la nube con lo que ya está localmente, sin perder
+// nada de ninguno de los dos lados (usuarios, solicitudes, motivos, tipos).
+// guiasDatos es la excepción a propósito: es un archivo que se reemplaza
+// entero de una sola vez (una carga nueva), no una lista para ir uniendo —
+// por eso solo se toma de la nube cuando NO se acaba de subir un archivo
+// nuevo localmente (ver "preservarGuiasLocal" más abajo).
+function mergeEstadoConNube(dataNube, preservarGuiasLocal){
+  if(!dataNube) return;
+  if(dataNube.cuentas) cuentas = mergeObjetos(cuentas, dataNube.cuentas);
+  if(!preservarGuiasLocal && dataNube.guiasDatos && dataNube.guiasDatos.length) guiasDatos = dataNube.guiasDatos;
+  if(dataNube.reclamosPostventa) reclamosPostventa = mergePorClave(reclamosPostventa, dataNube.reclamosPostventa, 'id');
+  if(dataNube.reclamoContador) reclamoContador = Math.max(reclamoContador, dataNube.reclamoContador);
+  if(dataNube.maestroMotivosReclamo) maestroMotivosReclamo = mergePorClave(maestroMotivosReclamo, dataNube.maestroMotivosReclamo, 'id');
+  if(dataNube.maestroTiposReclamo) maestroTiposReclamo = mergePorClave(maestroTiposReclamo, dataNube.maestroTiposReclamo, 'id');
+}
+// Guarda el estado. SIEMPRE trae primero lo último de la nube y lo mezcla
+// antes de subir — así una acción de un usuario nunca pisa lo que otro
+// acaba de hacer (ej: aprobar un reclamo mientras alguien más envía uno
+// nuevo). Pasa preservarGuiasLocal=true solo justo después de procesar un
+// archivo de Guías nuevo, para que esa carga sea la que quede.
+async function guardarEstado(preservarGuiasLocal){
+  if(SYNC_ACTIVO && SYNC_BIN_ID){
+    const dataNube = await obtenerEstadoNube();
+    mergeEstadoConNube(dataNube, preservarGuiasLocal);
+  }
   guardarEstadoLocal();
   if(SYNC_ACTIVO && SYNC_BIN_ID){
     try{
@@ -381,21 +415,11 @@ async function guardarEstado(){
   }
 }
 async function syncPull(){
-  if(!SYNC_ACTIVO || !SYNC_BIN_ID) return;
-  try{
-    const resp = await fetch(`https://api.jsonbin.io/v3/b/${SYNC_BIN_ID}/latest`, { headers:{ 'X-Master-Key':SYNC_API_KEY } });
-    const json = await resp.json();
-    const data = json.record;
-    if(!data) return;
-    if(data.cuentas) cuentas = mergeObjetos(cuentas, data.cuentas);
-    if(data.guiasDatos && data.guiasDatos.length) guiasDatos = data.guiasDatos;
-    if(data.reclamosPostventa) reclamosPostventa = mergePorClave(reclamosPostventa, data.reclamosPostventa, 'id');
-    if(data.reclamoContador) reclamoContador = Math.max(reclamoContador, data.reclamoContador);
-    if(data.maestroMotivosReclamo) maestroMotivosReclamo = mergePorClave(maestroMotivosReclamo, data.maestroMotivosReclamo, 'id');
-    if(data.maestroTiposReclamo) maestroTiposReclamo = mergePorClave(maestroTiposReclamo, data.maestroTiposReclamo, 'id');
-    guardarEstadoLocal();
-    renderTodo();
-  }catch(e){ console.warn('No se pudo traer datos de la nube:', e); }
+  const dataNube = await obtenerEstadoNube();
+  if(!dataNube) return;
+  mergeEstadoConNube(dataNube, false);
+  guardarEstadoLocal();
+  renderTodo();
 }
 setInterval(syncPull, 60000);
 
@@ -846,7 +870,7 @@ function procesarFilasNV(rows){
     }
   });
   guiasDatos = Object.values(porFolio);
-  guardarEstado();
+  guardarEstado(true); // true = no dejar que la versión de la nube pise esta carga recién hecha
   renderStatsImportNV();
 }
 function renderStatsImportNV(){
