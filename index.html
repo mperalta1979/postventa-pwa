@@ -134,9 +134,14 @@
     <section id="tab-nueva" class="tab" style="display:block;">
       <div class="panel">
         <h2>Postventa — Nueva Solicitud</h2>
-        <p class="hint" id="hintBuscarNV">Escribe el número de Nota de Venta y busca. Solo puedes crear solicitudes de tus propias NV.</p>
+        <p class="hint" id="hintBuscarNV">Busca por N° de Guía, N° de NV o N° de Factura — cualquiera de los tres te trae los datos completos. Solo puedes crear solicitudes de tus propias NV.</p>
         <div class="row">
-          <input type="text" id="buscarNVInput" placeholder="N° de NV...">
+          <select id="tipoBusquedaSel">
+            <option value="guia">N° de Guía de Despacho</option>
+            <option value="nv">N° de Nota de Venta</option>
+            <option value="factura">N° de Factura</option>
+          </select>
+          <input type="text" id="buscarNVInput" placeholder="Número...">
           <button class="btn" id="btnBuscarNV">Buscar</button>
         </div>
         <div id="resultadoBusquedaNV" style="margin-top:16px;"></div>
@@ -177,7 +182,7 @@
         </div>
         <div class="table-scroll">
           <table>
-            <thead><tr><th>N°</th><th>Fecha</th><th>NV</th><th>Cliente</th><th>Solicitante</th><th>Tipo</th><th>Estado</th><th>N° Sol. Nota Crédito</th><th></th></tr></thead>
+            <thead><tr><th>N°</th><th>Fecha</th><th>NV</th><th>Guía</th><th>Cliente</th><th>Solicitante</th><th>Tipo</th><th>Estado</th><th>N° Sol. Nota Crédito</th><th></th></tr></thead>
             <tbody id="tbodyHistorial"></tbody>
           </table>
         </div>
@@ -188,8 +193,8 @@
     <!-- IMPORTAR NV (admin) -->
     <section id="tab-importar" class="tab">
       <div class="panel">
-        <h2>Importar Notas de Venta</h2>
-        <p class="hint">Sube el mismo archivo tipo query (.xlsx) que usas en Control de Negocios. Se guardan NV, cliente, vendedor, fecha y el detalle de códigos de cada una.</p>
+        <h2>Importar Guías de Despacho</h2>
+        <p class="hint">Sube el archivo "Query Guías de Despacho" (.xlsx) — el mismo que usas en Control de Negocios. Se procesan solo las guías <strong>Tipo = S</strong> (Salida) y <strong>Estado = V</strong> (Vigente); el resto se descarta. Guarda N° de Guía, N° de NV, N° de Factura, cliente, vendedor, patente, quién retiró y el detalle de códigos despachados.</p>
         <div class="row">
           <input type="file" id="fileInputNV" accept=".xlsx,.xls">
           <button class="btn" id="btnProcesarNV">Procesar archivo</button>
@@ -268,7 +273,7 @@
 let cuentas = {}; // usuario -> {passwordHash, rol:'admin'|'vendedor', vendedorAsociado}
 let usuarioActual = null;
 let rolActual = null;
-let nvsDatos = []; // [{nv, cliente, vendedor, fecha(ISO), lineas:[{codigo,descripcion,um,cantidad}]}]
+let guiasDatos = []; // [{folio, fecha(ISO), factura, nv, cliente, vendedor, patente, retiradoPor, lineas:[{codigo,descripcion,cantidad,numoc}]}]
 let reclamosPostventa = [];
 let reclamoContador = 0;
 let maestroMotivosReclamo = []; // [{id, motivo}]
@@ -316,7 +321,7 @@ function puedeVerReclamo(r){
 
 // ==================== Persistencia local ====================
 function estadoCompartido(){
-  return { cuentas, nvsDatos, reclamosPostventa, reclamoContador, maestroMotivosReclamo };
+  return { cuentas, guiasDatos, reclamosPostventa, reclamoContador, maestroMotivosReclamo };
 }
 function guardarEstadoLocal(){
   try{ localStorage.setItem(LS_KEY, JSON.stringify(estadoCompartido())); }catch(e){ console.warn('No se pudo guardar local:', e); }
@@ -327,7 +332,7 @@ function cargarEstadoLocal(){
     if(!raw) return;
     const data = JSON.parse(raw);
     if(data.cuentas) cuentas = data.cuentas;
-    if(data.nvsDatos) nvsDatos = data.nvsDatos;
+    if(data.guiasDatos) guiasDatos = data.guiasDatos;
     if(data.reclamosPostventa) reclamosPostventa = data.reclamosPostventa;
     if(data.reclamoContador) reclamoContador = data.reclamoContador;
     if(data.maestroMotivosReclamo) maestroMotivosReclamo = data.maestroMotivosReclamo;
@@ -362,7 +367,7 @@ async function syncPull(){
     const data = json.record;
     if(!data) return;
     if(data.cuentas) cuentas = mergeObjetos(cuentas, data.cuentas);
-    if(data.nvsDatos && data.nvsDatos.length) nvsDatos = data.nvsDatos;
+    if(data.guiasDatos && data.guiasDatos.length) guiasDatos = data.guiasDatos;
     if(data.reclamosPostventa) reclamosPostventa = mergePorClave(reclamosPostventa, data.reclamosPostventa, 'id');
     if(data.reclamoContador) reclamoContador = Math.max(reclamoContador, data.reclamoContador);
     if(data.maestroMotivosReclamo) maestroMotivosReclamo = mergePorClave(maestroMotivosReclamo, data.maestroMotivosReclamo, 'id');
@@ -423,8 +428,8 @@ function entrarApp(){
   document.getElementById('usuarioActualLbl').textContent = `${usuarioActual} (${rolActual==='admin'?'Administrador':'Vendedor'})`;
   document.querySelectorAll('.admin-only').forEach(el => el.style.display = esAdmin() ? '' : 'none');
   document.getElementById('hintBuscarNV').textContent = esAdmin()
-    ? 'Escribe el número de Nota de Venta y busca — como Admin puedes ver cualquier NV.'
-    : `Escribe el número de Nota de Venta y busca — solo puedes ver NV de tu propio vendedor (${miVendedor()||'sin asignar'}).`;
+    ? 'Busca por N° de Guía, N° de NV o N° de Factura — como Admin puedes ver cualquier documento.'
+    : `Busca por N° de Guía, N° de NV o N° de Factura — solo puedes ver documentos de tu propio vendedor (${miVendedor()||'sin asignar'}).`;
   document.querySelector('#tabs button[data-tab="nueva"]').click();
   renderTodo();
 }
@@ -464,26 +469,69 @@ document.getElementById('navMaestro').addEventListener('click', () => {
 document.getElementById('btnBuscarNV').addEventListener('click', buscarDocumentoNV);
 document.getElementById('buscarNVInput').addEventListener('keydown', (e)=>{ if(e.key==='Enter') buscarDocumentoNV(); });
 function buscarDocumentoNV(){
+  const tipo = document.getElementById('tipoBusquedaSel').value; // 'guia'|'nv'|'factura'
   const numero = document.getElementById('buscarNVInput').value.trim();
   const cont = document.getElementById('resultadoBusquedaNV');
-  if(!numero){ cont.innerHTML = '<p class="hint">Ingresa un número de NV.</p>'; return; }
-  const nvData = nvsDatos.find(x => String(x.nv) === numero);
-  if(!nvData){
-    cont.innerHTML = `<p class="hint">No se encontró la NV ${numero}. ${esAdmin() ? 'Puede que falte importarla en "Importar NV".' : 'Puede que no esté cargada, o que no sea tuya.'}</p>`;
+  if(!numero){ cont.innerHTML = '<p class="hint">Ingresa un número.</p>'; return; }
+  if(!guiasDatos.length){
+    cont.innerHTML = `<p class="hint">Todavía no hay guías de despacho cargadas. ${esAdmin() ? 'Ve a Maestro \u2192 Importar NV para cargarlas.' : 'Pídele al Admin que cargue el archivo de Guías de Despacho.'}</p>`;
     return;
   }
-  if(!esAdmin() && !nvPerteneceAMiVendedor(nvData.vendedor)){
-    cont.innerHTML = `<p class="hint">La NV ${numero} no está asociada a tu usuario — no puedes generar una solicitud de Postventa para ella.</p>`;
+  let candidatas = [];
+  if(tipo === 'guia') candidatas = guiasDatos.filter(g => String(g.folio) === numero);
+  else if(tipo === 'factura') candidatas = guiasDatos.filter(g => String(g.factura) === numero);
+  else candidatas = guiasDatos.filter(g => String(g.nv) === numero);
+
+  if(!esAdmin()) candidatas = candidatas.filter(g => nvPerteneceAMiVendedor(g.vendedor));
+
+  if(!candidatas.length){
+    const etiqueta = tipo==='guia' ? 'N° de Guía' : (tipo==='factura' ? 'N° de Factura' : 'N° de NV');
+    cont.innerHTML = `<p class="hint">No se encontró ninguna guía para ese ${etiqueta}. Puede que no esté cargada, que no sea tuya, o que esté mal digitada.</p>`;
     return;
   }
-  const encabezado = `<div class="small-note" style="margin-bottom:10px;">Cliente: <strong>${nvData.cliente||'-'}</strong> · Vendedor: <strong>${nvData.vendedor||'-'}</strong> · Fecha: <strong>${nvData.fecha?new Date(nvData.fecha).toLocaleDateString('es-CL'):'-'}</strong></div>`;
+  if(candidatas.length === 1){
+    mostrarFormularioGuia(candidatas[0]);
+    return;
+  }
+  // Varias guías coinciden (típico al buscar por NV, que puede tener más de un despacho) —
+  // que el usuario elija cuál quiere usar para la solicitud.
+  window.__candidatasGuia = candidatas;
+  cont.innerHTML = `
+    <p class="hint">Esa NV tiene ${candidatas.length} guías de despacho asociadas — elige cuál quieres usar para la solicitud:</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>N° Guía</th><th>Fecha</th><th>N° Factura</th><th>Patente</th><th>Retirado por</th><th></th></tr></thead>
+        <tbody>
+          ${candidatas.map(g => `<tr>
+            <td>${g.folio}</td>
+            <td>${g.fecha?new Date(g.fecha).toLocaleDateString('es-CL'):'-'}</td>
+            <td>${g.factura||'-'}</td>
+            <td>${g.patente||'-'}</td>
+            <td>${g.retiradoPor||'-'}</td>
+            <td><button class="btn secondary" style="padding:5px 10px;font-size:.78rem;" onclick="seleccionarGuiaPorFolio('${g.folio}')">Usar esta</button></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+function seleccionarGuiaPorFolio(folio){
+  const g = (window.__candidatasGuia||[]).find(x => String(x.folio)===String(folio));
+  if(g) mostrarFormularioGuia(g);
+}
+function mostrarFormularioGuia(guia){
+  const cont = document.getElementById('resultadoBusquedaNV');
+  const encabezado = `<div class="small-note" style="margin-bottom:10px;line-height:1.6;">
+    Guía N°: <strong>${guia.folio}</strong> · NV: <strong>${guia.nv||'-'}</strong> · Factura: <strong>${guia.factura||'-'}</strong><br>
+    Cliente: <strong>${guia.cliente||'-'}</strong> · Vendedor: <strong>${guia.vendedor||'-'}</strong> · Fecha: <strong>${guia.fecha?new Date(guia.fecha).toLocaleDateString('es-CL'):'-'}</strong><br>
+    Patente: <strong>${guia.patente||'-'}</strong> · Retirado por: <strong>${guia.retiradoPor||'-'}</strong>
+  </div>`;
   const opcionesMotivo = maestroMotivosReclamo.map(m => `<option value="${m.motivo.replace(/"/g,'&quot;')}">${m.motivo}</option>`).join('');
-  const filasLineas = nvData.lineas.map((l,idx) => `
+  const filasLineas = guia.lineas.map((l,idx) => `
     <tr>
       <td><input type="checkbox" class="chkLineaNV" value="${idx}"></td>
       <td>${l.codigo}</td>
       <td>${l.descripcion||''}</td>
-      <td>${l.um||''}</td>
       <td><input type="number" step="0.01" class="cantidadLineaNV" data-idx="${idx}" value="${fmt(Number(l.cantidad)||0,2)}" style="width:100px;"></td>
       <td>
         <select class="motivoLineaNV" data-idx="${idx}" style="min-width:170px;">
@@ -496,7 +544,7 @@ function buscarDocumentoNV(){
     ${encabezado}
     <div class="table-scroll">
       <table>
-        <thead><tr><th></th><th>Código</th><th>Descripción</th><th>UM</th><th>Cantidad</th><th>Motivo</th></tr></thead>
+        <thead><tr><th></th><th>Código</th><th>Descripción</th><th>Cantidad Despachada</th><th>Motivo</th></tr></thead>
         <tbody>${filasLineas}</tbody>
       </table>
     </div>
@@ -526,7 +574,7 @@ function buscarDocumentoNV(){
       <span id="envioReclamoStatus" class="hint"></span>
     </div>
   `;
-  window.__busquedaNVActual = { nv: numero, data: nvData };
+  window.__busquedaNVActual = { nv: guia.nv, data: guia, guia: guia };
   document.getElementById('btnEnviarReclamo').addEventListener('click', enviarSolicitud);
 }
 const LIMITE_ADJUNTO_BYTES = 4*1024*1024;
@@ -566,7 +614,7 @@ async function enviarSolicitud(){
   const items = idxs.map(idx => {
     const l = ctx.data.lineas[idx];
     const cantInput = document.querySelector(`.cantidadLineaNV[data-idx="${idx}"]`);
-    return { codigo:l.codigo, descripcion:l.descripcion||'', um:l.um||'', cantidad: parseFloat(cantInput.value)||0, motivo: motivosPorLinea[idx] };
+    return { codigo:l.codigo, descripcion:l.descripcion||'', cantidad: parseFloat(cantInput.value)||0, motivo: motivosPorLinea[idx] };
   });
   reclamoContador += 1;
   reclamosPostventa.push({
@@ -575,6 +623,7 @@ async function enviarSolicitud(){
     fecha: new Date().toISOString(),
     usuarioSolicitante: usuarioActual,
     nv: ctx.nv, cliente: ctx.data.cliente||'', vendedor: ctx.data.vendedor||'',
+    guiaFolio: ctx.guia.folio||'', factura: ctx.guia.factura||'', patente: ctx.guia.patente||'', retiradoPor: ctx.guia.retiradoPor||'',
     items, tipoReclamo, motivo: observaciones, archivo,
     estado:'pendiente', revisadoPor:null, fechaRevision:null, notaRevision:'',
     numeroNotaCredito:'', fechaCierre:null, usuarioCierre:null
@@ -588,7 +637,7 @@ async function enviarSolicitud(){
 
 // ==================== Tarjetas de reclamo (compartidas) ====================
 function renderTarjetaReclamo(r, contexto){
-  const filasItems = r.items.map(it => `<tr><td>${it.codigo}</td><td>${it.descripcion}</td><td>${it.um}</td><td>${fmt(it.cantidad,2)}</td><td>${it.motivo||'-'}</td></tr>`).join('');
+  const filasItems = r.items.map(it => `<tr><td>${it.codigo}</td><td>${it.descripcion}</td><td>${fmt(it.cantidad,2)}</td><td>${it.motivo||'-'}</td></tr>`).join('');
   const diasPendiente = contexto==='pendiente' ? Math.floor((Date.now()-new Date(r.fecha).getTime())/86400000) : null;
   const badgeDias = diasPendiente!==null ? `<span class="pill ${diasPendiente>=3?'alert':(diasPendiente>=1?'warn':'ok')}" style="margin-left:6px;">${diasPendiente===0?'Hoy':diasPendiente+' día'+(diasPendiente===1?'':'s')+' sin responder'}</span>` : '';
   let acciones = '';
@@ -615,7 +664,8 @@ function renderTarjetaReclamo(r, contexto){
     <div class="row" style="justify-content:space-between;flex-wrap:wrap;">
       <div>
         <strong style="color:var(--navy);">${r.numero}</strong> <span class="pill ${ESTADO_RECLAMO_PILL[r.estado]}">${ESTADO_RECLAMO_LABEL[r.estado]}</span>${badgeDias}
-        <div class="small-note">NV ${r.nv} · Cliente: ${r.cliente||'-'}</div>
+        <div class="small-note">NV ${r.nv} · Guía N°: ${r.guiaFolio||'-'} · Factura: ${r.factura||'-'} · Cliente: ${r.cliente||'-'}</div>
+        <div class="small-note">Patente: ${r.patente||'-'} · Retirado por: ${r.retiradoPor||'-'}</div>
         <div class="small-note">Solicitado por ${r.usuarioSolicitante} — ${new Date(r.fecha).toLocaleString('es-CL')}</div>
         <div class="small-note">Tipo de reclamo: <strong>${TIPO_RECLAMO_LABEL[r.tipoReclamo]}</strong></div>
       </div>
@@ -623,7 +673,7 @@ function renderTarjetaReclamo(r, contexto){
     <div class="small-note" style="margin-top:6px;">${r.motivo}</div>
     ${r.archivo ? `<div style="margin-top:6px;"><a href="${r.archivo.dataUrl}" download="${r.archivo.nombre}" target="_blank" class="pill" style="text-decoration:none;">📎 ${r.archivo.nombre}</a></div>` : ''}
     <table style="margin-top:8px;">
-      <thead><tr><th>Código</th><th>Descripción</th><th>UM</th><th>Cantidad</th><th>Motivo</th></tr></thead>
+      <thead><tr><th>Código</th><th>Descripción</th><th>Cantidad</th><th>Motivo</th></tr></thead>
       <tbody>${filasItems}</tbody>
     </table>
     ${r.estado==='rechazado' ? `<div class="small-note" style="margin-top:6px;">Rechazado por ${r.revisadoPor} — ${new Date(r.fechaRevision).toLocaleString('es-CL')}${r.notaRevision?': '+r.notaRevision:''}</div>` : ''}
@@ -667,7 +717,7 @@ function renderHistorial(){
   if(!lista.length){ tbody.innerHTML=''; empty.style.display='block'; return; }
   empty.style.display = 'none';
   tbody.innerHTML = lista.map(r => `<tr>
-    <td>${r.numero}</td><td>${new Date(r.fecha).toLocaleDateString('es-CL')}</td><td>${r.nv}</td>
+    <td>${r.numero}</td><td>${new Date(r.fecha).toLocaleDateString('es-CL')}</td><td>${r.nv}</td><td>${r.guiaFolio||'-'}</td>
     <td>${r.cliente||'-'}</td><td>${r.usuarioSolicitante}</td><td>${TIPO_RECLAMO_LABEL[r.tipoReclamo]}</td>
     <td><span class="pill ${ESTADO_RECLAMO_PILL[r.estado]}">${ESTADO_RECLAMO_LABEL[r.estado]}</span></td>
     <td>${r.numeroNotaCredito||'-'}</td>
@@ -737,41 +787,49 @@ document.getElementById('btnProcesarNV').addEventListener('click', () => {
   reader.readAsArrayBuffer(file);
 });
 function procesarFilasNV(rows){
-  const porNV = {};
+  const porFolio = {};
   rows.forEach(row => {
-    const nv = row['nvnumero'];
-    if(nv===null || nv===undefined || nv==='') return;
-    const key = String(nv).trim();
-    if(!porNV[key]){
-      porNV[key] = {
-        nv: key,
-        cliente: (row['NomAux']||'').toString().trim(),
+    const tipo = String(row['Tipo']||'').trim();
+    const estado = String(row['Estado']||'').trim();
+    if(tipo !== 'S' || estado !== 'V') return; // solo Salidas Vigentes
+    const folio = row['Folio'];
+    if(folio===null || folio===undefined || folio==='') return;
+    const key = String(folio).trim();
+    if(!porFolio[key]){
+      const facturaVal = row['Factura'];
+      porFolio[key] = {
+        folio: key,
+        fecha: comoFechaISO(row['Fecha']) || null,
+        factura: (facturaVal && Number(facturaVal)>0) ? String(facturaVal) : '',
+        nv: String(row['nvnumero2'] || row['nvnumero'] || '').trim(),
+        cliente: (row['nomaux']||'').toString().trim(),
         vendedor: (row['VenDes']||'').toString().trim(),
-        fecha: comoFechaISO(row['fecha_emis']) || null,
+        patente: (row['Patente']||'').toString().trim(),
+        retiradoPor: (row['RetiradoPor']||'').toString().trim(),
         lineas: []
       };
     }
     if(row['CodProd']){
-      porNV[key].lineas.push({
+      porFolio[key].lineas.push({
         codigo: String(row['CodProd']).trim(),
-        descripcion: (row['DesProd']||'').toString().trim(),
-        um: (row['CodUMed']||'').toString().trim(),
-        cantidad: Number(row['Pedido'])||0
+        descripcion: (row['DetProd']||'').toString().trim(),
+        cantidad: Number(row['cantdespuvta'])||0,
+        numoc: (row['numoc']||'').toString().trim()
       });
     }
   });
-  nvsDatos = Object.values(porNV);
+  guiasDatos = Object.values(porFolio);
   guardarEstado();
   renderStatsImportNV();
 }
 function renderStatsImportNV(){
   const cont = document.getElementById('statsImportNV');
   if(!cont) return;
-  const totalLineas = nvsDatos.reduce((s,n)=>s+n.lineas.length,0);
+  const totalLineas = guiasDatos.reduce((s,n)=>s+n.lineas.length,0);
   cont.innerHTML = `
-    <div class="stat"><div class="num">${nvsDatos.length}</div><div class="lbl">NV cargadas</div></div>
+    <div class="stat"><div class="num">${guiasDatos.length}</div><div class="lbl">Guías cargadas (Tipo S, Vigentes)</div></div>
     <div class="stat"><div class="num">${totalLineas}</div><div class="lbl">Líneas de detalle</div></div>
-    <div class="stat"><div class="num">${new Set(nvsDatos.map(n=>n.vendedor).filter(Boolean)).size}</div><div class="lbl">Vendedores distintos</div></div>
+    <div class="stat"><div class="num">${new Set(guiasDatos.map(n=>n.nv).filter(Boolean)).size}</div><div class="lbl">NV distintas con guía</div></div>
   `;
 }
 
