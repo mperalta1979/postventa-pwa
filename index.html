@@ -177,7 +177,7 @@
         </div>
         <div class="table-scroll">
           <table>
-            <thead><tr><th>N°</th><th>Fecha</th><th>NV</th><th>Cliente</th><th>Solicitante</th><th>Tipo</th><th>Estado</th><th>N° Sol. Nota Crédito</th></tr></thead>
+            <thead><tr><th>N°</th><th>Fecha</th><th>NV</th><th>Cliente</th><th>Solicitante</th><th>Tipo</th><th>Estado</th><th>N° Sol. Nota Crédito</th><th></th></tr></thead>
             <tbody id="tbodyHistorial"></tbody>
           </table>
         </div>
@@ -189,7 +189,7 @@
     <section id="tab-importar" class="tab">
       <div class="panel">
         <h2>Importar Notas de Venta</h2>
-        <p class="hint">Sube el mismo archivo tipo query (.xlsx) que usas en Control de Negocios (encabezados en la fila 7). Se guardan NV, cliente, vendedor, fecha y el detalle de códigos de cada una.</p>
+        <p class="hint">Sube el mismo archivo tipo query (.xlsx) que usas en Control de Negocios. Se guardan NV, cliente, vendedor, fecha y el detalle de códigos de cada una.</p>
         <div class="row">
           <input type="file" id="fileInputNV" accept=".xlsx,.xls">
           <button class="btn" id="btnProcesarNV">Procesar archivo</button>
@@ -594,7 +594,8 @@ function renderTarjetaReclamo(r, contexto){
   let acciones = '';
   if(contexto==='pendiente' && esAdmin()){
     acciones = `<button class="btn" onclick="aprobarReclamo('${r.id}')">Aprobar</button>
-      <button class="btn danger" onclick="rechazarReclamo('${r.id}')">Rechazar</button>`;
+      <button class="btn danger" onclick="rechazarReclamo('${r.id}')">Rechazar</button>
+      <button class="btn danger" onclick="eliminarReclamo('${r.id}')">Eliminar</button>`;
   } else if(contexto==='revision' && esAdmin()){
     acciones = `
       <div style="margin-top:8px;">
@@ -607,6 +608,7 @@ function renderTarjetaReclamo(r, contexto){
           <input type="text" id="ncInput_${r.id}" value="${r.numeroNotaCredito||''}" style="width:160px;">
         </div>
         <button class="btn" onclick="cerrarReclamo('${r.id}')">Cerrar solicitud</button>
+        <button class="btn danger" onclick="eliminarReclamo('${r.id}')">Eliminar</button>
       </div>`;
   }
   return `<div style="border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:12px;">
@@ -669,6 +671,7 @@ function renderHistorial(){
     <td>${r.cliente||'-'}</td><td>${r.usuarioSolicitante}</td><td>${TIPO_RECLAMO_LABEL[r.tipoReclamo]}</td>
     <td><span class="pill ${ESTADO_RECLAMO_PILL[r.estado]}">${ESTADO_RECLAMO_LABEL[r.estado]}</span></td>
     <td>${r.numeroNotaCredito||'-'}</td>
+    <td>${esAdmin() ? `<button class="btn danger" style="padding:4px 8px;font-size:.72rem;" onclick="eliminarReclamo('${r.id}')">Eliminar</button>` : ''}</td>
   </tr>`).join('');
 }
 document.getElementById('filtroHistNV').addEventListener('input', renderHistorial);
@@ -698,6 +701,17 @@ function cerrarReclamo(id){
   r.numeroNotaCredito=nc; r.estado='cerrado'; r.fechaCierre=new Date().toISOString(); r.usuarioCierre=usuarioActual;
   guardarEstado(); renderRevision(); renderHistorial();
 }
+// Elimina una solicitud por completo (para pruebas o errores de un usuario)
+// — solo el Admin puede hacerlo, sin importar el estado en que esté.
+function eliminarReclamo(id){
+  if(!esAdmin()) return;
+  const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
+  if(!confirm(`¿Eliminar por completo la solicitud ${r.numero} (NV ${r.nv})? Esta acción no se puede deshacer.`)) return;
+  const idx = reclamosPostventa.findIndex(x=>x.id===id);
+  if(idx>=0) reclamosPostventa.splice(idx,1);
+  guardarEstado();
+  renderPendientes(); renderRevision(); renderHistorial();
+}
 
 // ==================== Importar NV (admin) ====================
 document.getElementById('btnProcesarNV').addEventListener('click', () => {
@@ -712,7 +726,7 @@ document.getElementById('btnProcesarNV').addEventListener('click', () => {
       const data = new Uint8Array(e.target.result);
       const wb = XLSX.read(data, {type:'array', cellDates:true});
       const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(ws, {range:6, defval:null}); // encabezados en fila 7
+      const rows = XLSX.utils.sheet_to_json(ws, {defval:null}); // encabezados en la fila 1
       procesarFilasNV(rows);
       status.textContent = `Procesado (${file.name}) — ${new Date().toLocaleTimeString('es-CL')}`;
     }catch(err){
