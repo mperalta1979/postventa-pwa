@@ -78,6 +78,17 @@
   .stat{background:#f2f8fc;border-radius:8px;padding:12px 14px;}
   .stat .num{font-size:1.4rem;font-weight:700;color:var(--navy);}
   .stat .lbl{font-size:.75rem;color:var(--muted);}
+  .dash-chart-row{display:flex;gap:24px;flex-wrap:wrap;align-items:center;}
+  .dash-legend{display:flex;flex-direction:column;gap:6px;min-width:220px;flex:1;}
+  .dash-legend-item{display:flex;align-items:center;gap:8px;font-size:.84rem;}
+  .dash-legend-swatch{width:12px;height:12px;border-radius:3px;flex-shrink:0;}
+  .dash-legend-lbl{flex:1;color:var(--text);}
+  .dash-legend-val{color:var(--muted);white-space:nowrap;}
+  .dash-empty{color:var(--muted);font-size:.85rem;padding:10px 0;}
+  .dash-bars{display:flex;flex-direction:column;gap:5px;}
+  .dash-bar-row{display:grid;grid-template-columns:70px 1fr 110px;align-items:center;gap:8px;font-size:.8rem;}
+  .dash-bar-track{background:#eef3f8;border-radius:4px;height:16px;overflow:hidden;}
+  .dash-bar-fill{background:var(--navy);height:100%;border-radius:4px;}
 </style>
 </head>
 <body>
@@ -115,6 +126,7 @@
   </header>
 
   <nav id="tabs">
+    <button data-tab="dashboard">Dashboard</button>
     <button data-tab="nueva" class="active">Nueva Solicitud</button>
     <button data-tab="pendientes">Solicitudes Pendientes</button>
     <button data-tab="revision">En Revisión</button>
@@ -130,6 +142,62 @@
   </nav>
 
   <main>
+
+    <!-- DASHBOARD -->
+    <section id="tab-dashboard" class="tab">
+      <div class="panel">
+        <h2>Dashboard Postventa</h2>
+        <p class="hint" id="dashScopeHint"></p>
+        <div class="stat-grid" id="dashStatsGrid"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Pendientes vs En Revisión</h2>
+        <div class="dash-chart-row" id="dashChartGeneral"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Por Vendedor</h2>
+        <div class="dash-chart-row" id="dashChartVendedor"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Por Cliente</h2>
+        <div class="dash-chart-row" id="dashChartCliente"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Por Operador de Grúa</h2>
+        <div class="dash-chart-row" id="dashChartOperador"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Por Motivo</h2>
+        <div class="dash-chart-row" id="dashChartMotivo"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Por Tipo de Reclamo</h2>
+        <div class="dash-chart-row" id="dashChartTipo"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Evolución mensual de solicitudes</h2>
+        <p class="hint">Cantidad de solicitudes creadas por mes, últimos 12 meses.</p>
+        <div id="dashEvolucionMensual"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Ranking de códigos más reclamados</h2>
+        <p class="hint">Top 10 por cantidad de veces reclamado (todas las solicitudes, cualquier estado).</p>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>Código</th><th>Descripción</th><th>N° de veces</th><th>Cantidad reclamada total</th></tr></thead>
+            <tbody id="tbodyRankingCodigos"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
 
     <!-- NUEVA SOLICITUD -->
     <section id="tab-nueva" class="tab" style="display:block;">
@@ -292,7 +360,7 @@
 let cuentas = {}; // usuario -> {passwordHash, rol:'admin'|'vendedor', vendedorAsociado}
 let usuarioActual = null;
 let rolActual = null;
-let guiasDatos = []; // [{folio, fecha(ISO), factura, nv, cliente, vendedor, patente, retiradoPor, lineas:[{codigo,descripcion,cantidad,numoc}]}]
+let guiasDatos = []; // [{folio, fecha(ISO), factura, nv, cliente, vendedor, patente, retiradoPor, operadorGrua, lineas:[{codigo,descripcion,cantidad,numoc}]}]
 let reclamosPostventa = [];
 let reclamoContador = 0;
 let maestroMotivosReclamo = []; // [{id, motivo}]
@@ -504,6 +572,7 @@ document.querySelectorAll('#tabs button[data-tab], #subnavMaestro button[data-ta
     document.getElementById('tab-'+btn.dataset.tab).style.display='block';
     if(btn.dataset.tab==='motivos') renderMotivosReclamo();
     if(btn.dataset.tab==='tiposreclamo') renderTiposReclamo();
+    if(btn.dataset.tab==='dashboard') renderDashboard();
     if(SECCIONES_MAESTRO.includes(btn.dataset.tab)) document.getElementById('navMaestro').classList.add('active');
     else document.getElementById('navMaestro').classList.remove('active');
   });
@@ -572,12 +641,25 @@ function seleccionarGuiaPorFolio(folio){
   const g = (window.__candidatasGuia||[]).find(x => String(x.folio)===String(folio));
   if(g) mostrarFormularioGuia(g);
 }
+const PLAZO_LEGAL_DIAS = 90;
+function diasDesdeFecha(fechaISO){
+  if(!fechaISO) return null;
+  return Math.floor((Date.now() - new Date(fechaISO).getTime()) / 86400000);
+}
 function mostrarFormularioGuia(guia){
   const cont = document.getElementById('resultadoBusquedaNV');
+  const dias = diasDesdeFecha(guia.fecha);
+  if(dias !== null && dias > PLAZO_LEGAL_DIAS){
+    cont.innerHTML = `<div class="panel" style="border-color:var(--alert);background:var(--alert-bg);margin-top:16px;">
+      <p style="color:var(--alert);font-weight:600;margin:0;">Su solicitud esta fuera del plazo legal para ser realizada, por favor contacte a Sub Gerente de Administracion</p>
+      <p class="small-note" style="margin-top:8px;">Guía N°: <strong>${guia.folio}</strong> · NV: <strong>${guia.nv||'-'}</strong> · Fecha de la guía: <strong>${new Date(guia.fecha).toLocaleDateString('es-CL')}</strong> (${dias} días corridos, plazo máximo ${PLAZO_LEGAL_DIAS})</p>
+    </div>`;
+    return;
+  }
   const encabezado = `<div class="small-note" style="margin-bottom:10px;line-height:1.6;">
     Guía N°: <strong>${guia.folio}</strong> · NV: <strong>${guia.nv||'-'}</strong> · Factura: <strong>${guia.factura||'-'}</strong><br>
     Cliente: <strong>${guia.cliente||'-'}</strong> · Vendedor: <strong>${guia.vendedor||'-'}</strong> · Fecha: <strong>${guia.fecha?new Date(guia.fecha).toLocaleDateString('es-CL'):'-'}</strong><br>
-    Patente: <strong>${guia.patente||'-'}</strong> · Retirado por: <strong>${guia.retiradoPor||'-'}</strong>
+    Patente: <strong>${guia.patente||'-'}</strong> · Retirado por: <strong>${guia.retiradoPor||'-'}</strong> · Operador de Grúa: <strong>${guia.operadorGrua||'-'}</strong>
   </div>`;
   const opcionesMotivo = maestroMotivosReclamo.map(m => `<option value="${m.motivo.replace(/"/g,'&quot;')}">${m.motivo}</option>`).join('');
   const filasLineas = guia.lineas.map((l,idx) => `
@@ -649,6 +731,11 @@ async function enviarSolicitud(){
   const ctx = window.__busquedaNVActual;
   const status = document.getElementById('envioReclamoStatus');
   if(!ctx) return;
+  const diasGuia = diasDesdeFecha(ctx.guia.fecha);
+  if(diasGuia !== null && diasGuia > PLAZO_LEGAL_DIAS){
+    status.textContent = 'Su solicitud esta fuera del plazo legal para ser realizada, por favor contacte a Sub Gerente de Administracion';
+    return;
+  }
   const idxs = [...document.querySelectorAll('.chkLineaNV:checked')].map(c => parseInt(c.value));
   if(!idxs.length){ status.textContent = 'Selecciona al menos un código.'; return; }
   // Cada línea marcada necesita su propio motivo y su propia cantidad reclamada — pueden ser distintos entre sí.
@@ -683,7 +770,7 @@ async function enviarSolicitud(){
     fecha: new Date().toISOString(),
     usuarioSolicitante: usuarioActual,
     nv: ctx.nv, cliente: ctx.data.cliente||'', vendedor: ctx.data.vendedor||'',
-    guiaFolio: ctx.guia.folio||'', factura: ctx.guia.factura||'', patente: ctx.guia.patente||'', retiradoPor: ctx.guia.retiradoPor||'',
+    guiaFolio: ctx.guia.folio||'', factura: ctx.guia.factura||'', patente: ctx.guia.patente||'', retiradoPor: ctx.guia.retiradoPor||'', operadorGrua: ctx.guia.operadorGrua||'',
     items, tipoReclamo, motivo: observaciones, archivo,
     estado:'pendiente', revisadoPor:null, fechaRevision:null, notaRevision:'',
     numeroNotaCredito:'', fechaCierre:null, usuarioCierre:null
@@ -725,7 +812,7 @@ function renderTarjetaReclamo(r, contexto){
       <div>
         <strong style="color:var(--navy);">${r.numero}</strong> <span class="pill ${ESTADO_RECLAMO_PILL[r.estado]}">${ESTADO_RECLAMO_LABEL[r.estado]}</span>${badgeDias}
         <div class="small-note">NV ${r.nv} · Guía N°: ${r.guiaFolio||'-'} · Factura: ${r.factura||'-'} · Cliente: ${r.cliente||'-'}</div>
-        <div class="small-note">Patente: ${r.patente||'-'} · Retirado por: ${r.retiradoPor||'-'}</div>
+        <div class="small-note">Patente: ${r.patente||'-'} · Retirado por: ${r.retiradoPor||'-'} · Operador de Grúa: ${r.operadorGrua||'-'}</div>
         <div class="small-note">Solicitado por ${r.usuarioSolicitante} — ${new Date(r.fecha).toLocaleString('es-CL')}</div>
         <div class="small-note">Tipo de reclamo: <strong>${TIPO_RECLAMO_LABEL[r.tipoReclamo] || r.tipoReclamo}</strong></div>
       </div>
@@ -823,6 +910,135 @@ function eliminarReclamo(id){
   renderPendientes(); renderRevision(); renderHistorial();
 }
 
+// ==================== Dashboard ====================
+const DASH_PALETTE = ['#1f3864','#5b9bd5','#2e7d32','#b8860b','#c0392b','#7c4dff','#00897b','#e07a5f','#8e7cc3','#4a7c59','#607d8b','#c2185b'];
+function dashPuntoPolar(cx, cy, r, angDeg){
+  const rad = (angDeg-90) * Math.PI/180;
+  return { x: cx + r*Math.cos(rad), y: cy + r*Math.sin(rad) };
+}
+function dashArcoDonut(cx, cy, rExt, rInt, angIni, angFin){
+  const largo = (angFin-angIni) > 180 ? 1 : 0;
+  const p1 = dashPuntoPolar(cx,cy,rExt,angIni), p2 = dashPuntoPolar(cx,cy,rExt,angFin);
+  const p3 = dashPuntoPolar(cx,cy,rInt,angFin), p4 = dashPuntoPolar(cx,cy,rInt,angIni);
+  return `M ${p1.x} ${p1.y} A ${rExt} ${rExt} 0 ${largo} 1 ${p2.x} ${p2.y} L ${p3.x} ${p3.y} A ${rInt} ${rInt} 0 ${largo} 0 ${p4.x} ${p4.y} Z`;
+}
+// data: [{label, value}]; coloresFijos opcional (mismo orden que data)
+function dashArmarDonut(data, coloresFijos){
+  const total = data.reduce((s,d)=>s+d.value,0);
+  if(!total) return '<p class="dash-empty">Sin datos para mostrar.</p>';
+  const cx=100, cy=100, rExt=95, rInt=55;
+  let ang = 0, paths = '';
+  const filas = data.map((d,i) => {
+    const pct = d.value/total*100;
+    const angFin = ang + (d.value/total*360);
+    const color = (coloresFijos && coloresFijos[i]) || DASH_PALETTE[i % DASH_PALETTE.length];
+    if(d.value>0) paths += `<path d="${dashArcoDonut(cx,cy,rExt,rInt,ang,angFin)}" fill="${color}"><title>${d.label}: ${d.value} (${fmt(pct,1)}%)</title></path>`;
+    ang = angFin;
+    return { ...d, pct, color };
+  });
+  const svg = `<svg viewBox="0 0 200 200" style="width:190px;height:190px;flex-shrink:0;">${paths}</svg>`;
+  const legend = `<div class="dash-legend">${filas.map(f => `
+    <div class="dash-legend-item">
+      <span class="dash-legend-swatch" style="background:${f.color};"></span>
+      <span class="dash-legend-lbl">${f.label}</span>
+      <span class="dash-legend-val">${f.value} (${fmt(f.pct,1)}%)</span>
+    </div>`).join('')}</div>`;
+  return svg + legend;
+}
+// Agrupa las categorías más chicas en "Otros" para que el gráfico no quede ilegible
+// cuando hay muchos valores distintos (ej: Cliente o Vendedor).
+function dashAgruparTopN(conteo, n=8){
+  const entradas = Object.entries(conteo).filter(([,v])=>v>0).sort((a,b)=>b[1]-a[1]);
+  if(entradas.length<=n) return entradas.map(([label,value])=>({label,value}));
+  const top = entradas.slice(0,n).map(([label,value])=>({label,value}));
+  const restoSuma = entradas.slice(n).reduce((s,[,v])=>s+v,0);
+  if(restoSuma>0) top.push({ label:`Otros (${entradas.length-n})`, value: restoSuma });
+  return top;
+}
+function dashContarPor(lista, campo){
+  const out = {};
+  lista.forEach(r => {
+    const k = (r[campo]||'').toString().trim() || 'Sin dato';
+    out[k] = (out[k]||0)+1;
+  });
+  return out;
+}
+function dashContarPorMotivo(lista){
+  const out = {};
+  lista.forEach(r => (r.items||[]).forEach(it => {
+    const k = it.motivo || 'Sin motivo';
+    out[k] = (out[k]||0)+1;
+  }));
+  return out;
+}
+function renderDonutBloque(contId, conteo, coloresFijos){
+  document.getElementById(contId).innerHTML = dashArmarDonut(dashAgruparTopN(conteo), coloresFijos);
+}
+function dashRenderRankingCodigos(visibles){
+  const porCodigo = {};
+  visibles.forEach(r => (r.items||[]).forEach(it => {
+    if(!porCodigo[it.codigo]) porCodigo[it.codigo] = { codigo: it.codigo, descripcion: it.descripcion||'', veces: 0, cantidad: 0 };
+    porCodigo[it.codigo].veces += 1;
+    porCodigo[it.codigo].cantidad += Number(it.cantidad)||0;
+  }));
+  const top = Object.values(porCodigo).sort((a,b)=>b.veces-a.veces).slice(0,10);
+  document.getElementById('tbodyRankingCodigos').innerHTML = top.length
+    ? top.map(c => `<tr><td>${c.codigo}</td><td>${c.descripcion}</td><td>${c.veces}</td><td>${fmt(c.cantidad,2)}</td></tr>`).join('')
+    : `<tr><td colspan="4" class="dash-empty">Sin datos todavía.</td></tr>`;
+}
+function dashRenderEvolucionMensual(visibles){
+  const hoy = new Date();
+  const meses = [];
+  for(let i=11;i>=0;i--){
+    const d = new Date(hoy.getFullYear(), hoy.getMonth()-i, 1);
+    meses.push({ key:`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`, label: d.toLocaleDateString('es-CL',{month:'short',year:'2-digit'}), count:0 });
+  }
+  const porMes = {};
+  meses.forEach(m => porMes[m.key]=m);
+  visibles.forEach(r => {
+    const d = new Date(r.fecha);
+    const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    if(porMes[key]) porMes[key].count += 1;
+  });
+  const max = Math.max(1, ...meses.map(m=>m.count));
+  document.getElementById('dashEvolucionMensual').innerHTML = `<div class="dash-bars">${meses.map(m => `
+    <div class="dash-bar-row">
+      <span>${m.label}</span>
+      <div class="dash-bar-track"><div class="dash-bar-fill" style="width:${(m.count/max*100)}%;"></div></div>
+      <span>${m.count}</span>
+    </div>`).join('')}</div>`;
+}
+function renderDashboard(){
+  const visibles = reclamosPostventa.filter(puedeVerReclamo);
+  const activos = visibles.filter(r => r.estado==='pendiente' || r.estado==='aprobado');
+  document.getElementById('dashScopeHint').textContent = esAdmin()
+    ? 'Datos de todos los vendedores.'
+    : 'Mostrando solo tus propias solicitudes.';
+
+  const pendCount = activos.filter(r=>r.estado==='pendiente').length;
+  const revCount = activos.filter(r=>r.estado==='aprobado').length;
+  const cerrados = visibles.filter(r=>r.estado==='cerrado' && r.fechaCierre);
+  const promedioDias = cerrados.length
+    ? cerrados.reduce((s,r)=> s + (new Date(r.fechaCierre)-new Date(r.fecha))/86400000, 0) / cerrados.length
+    : null;
+
+  document.getElementById('dashStatsGrid').innerHTML = `
+    <div class="stat"><div class="num">${pendCount}</div><div class="lbl">Pendientes</div></div>
+    <div class="stat"><div class="num">${revCount}</div><div class="lbl">En Revisión</div></div>
+    <div class="stat"><div class="num">${promedioDias!==null?fmt(promedioDias,1):'-'}</div><div class="lbl">Días promedio de resolución</div></div>
+  `;
+
+  renderDonutBloque('dashChartGeneral', {Pendientes:pendCount, 'En Revisión':revCount}, ['#b8860b','#1f3864']);
+  renderDonutBloque('dashChartVendedor', dashContarPor(activos,'vendedor'));
+  renderDonutBloque('dashChartCliente', dashContarPor(activos,'cliente'));
+  renderDonutBloque('dashChartOperador', dashContarPor(activos,'operadorGrua'));
+  renderDonutBloque('dashChartMotivo', dashContarPorMotivo(activos));
+  renderDonutBloque('dashChartTipo', dashContarPor(activos,'tipoReclamo'));
+
+  dashRenderEvolucionMensual(visibles);
+  dashRenderRankingCodigos(visibles);
+}
+
 // ==================== Importar NV (admin) ====================
 document.getElementById('btnProcesarNV').addEventListener('click', () => {
   const input = document.getElementById('fileInputNV');
@@ -866,6 +1082,7 @@ function procesarFilasNV(rows){
         vendedor: (row['VenDes']||'').toString().trim(),
         patente: (row['Patente']||'').toString().trim(),
         retiradoPor: (row['RetiradoPor']||'').toString().trim(),
+        operadorGrua: (row['DespachadoPor']||'').toString().trim(),
         lineas: []
       };
     }
