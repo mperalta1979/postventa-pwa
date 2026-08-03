@@ -585,7 +585,8 @@ function mostrarFormularioGuia(guia){
       <td><input type="checkbox" class="chkLineaNV" value="${idx}"></td>
       <td>${l.codigo}</td>
       <td>${l.descripcion||''}</td>
-      <td><input type="number" step="0.01" class="cantidadLineaNV" data-idx="${idx}" value="${fmt(Number(l.cantidad)||0,2)}" style="width:100px;"></td>
+      <td>${fmt(Number(l.cantidad)||0,2)}</td>
+      <td><input type="number" step="0.01" min="0" class="cantidadReclamadaNV" data-idx="${idx}" placeholder="0" style="width:100px;"></td>
       <td>
         <select class="motivoLineaNV" data-idx="${idx}" style="min-width:170px;">
           <option value="">Selecciona un motivo...</option>
@@ -597,7 +598,7 @@ function mostrarFormularioGuia(guia){
     ${encabezado}
     <div class="table-scroll">
       <table>
-        <thead><tr><th></th><th>Código</th><th>Descripción</th><th>Cantidad Despachada</th><th>Motivo</th></tr></thead>
+        <thead><tr><th></th><th>Código</th><th>Descripción</th><th>Despachada</th><th>Reclamada</th><th>Motivo</th></tr></thead>
         <tbody>${filasLineas}</tbody>
       </table>
     </div>
@@ -650,22 +651,30 @@ async function enviarSolicitud(){
   if(!ctx) return;
   const idxs = [...document.querySelectorAll('.chkLineaNV:checked')].map(c => parseInt(c.value));
   if(!idxs.length){ status.textContent = 'Selecciona al menos un código.'; return; }
-  // Cada línea marcada necesita su propio motivo — pueden ser distintos entre sí.
+  // Cada línea marcada necesita su propio motivo y su propia cantidad reclamada — pueden ser distintos entre sí.
   const motivosPorLinea = {};
+  const excedidas = [];
   for(const idx of idxs){
     const sel = document.querySelector(`.motivoLineaNV[data-idx="${idx}"]`);
     const valor = sel ? sel.value : '';
     if(!valor){ status.textContent = `Elige el motivo del código ${ctx.data.lineas[idx].codigo} (falta al menos uno).`; return; }
     motivosPorLinea[idx] = valor;
+    const cantidadDespachada = Number(ctx.data.lineas[idx].cantidad) || 0;
+    const cantidadReclamada = parseFloat(document.querySelector(`.cantidadReclamadaNV[data-idx="${idx}"]`).value);
+    if(!cantidadReclamada || cantidadReclamada<=0){ status.textContent = `Ingresa la cantidad reclamada del código ${ctx.data.lineas[idx].codigo} (falta al menos una).`; return; }
+    // Puede pasar que se haya despachado físicamente más de lo que dice la guía —
+    // no se bloquea, solo se confirma antes de enviar.
+    if(cantidadReclamada > cantidadDespachada) excedidas.push(ctx.data.lineas[idx].codigo);
   }
+  if(excedidas.length && !confirm(`¿Está seguro que desea reclamar más cantidad que la despachada${excedidas.length>1?` en los códigos ${excedidas.join(', ')}`:` en el código ${excedidas[0]}`}?`)) return;
   const tipoReclamo = document.getElementById('tipoReclamoSel').value;
   const observaciones = document.getElementById('motivoReclamo').value.trim();
   let archivo;
   try{ archivo = await leerArchivoAdjunto(document.getElementById('archivoReclamo')); }catch(e){ return; }
   const items = idxs.map(idx => {
     const l = ctx.data.lineas[idx];
-    const cantInput = document.querySelector(`.cantidadLineaNV[data-idx="${idx}"]`);
-    return { codigo:l.codigo, descripcion:l.descripcion||'', cantidad: parseFloat(cantInput.value)||0, motivo: motivosPorLinea[idx] };
+    const cantInput = document.querySelector(`.cantidadReclamadaNV[data-idx="${idx}"]`);
+    return { codigo:l.codigo, descripcion:l.descripcion||'', cantidadDespachada: Number(l.cantidad)||0, cantidad: parseFloat(cantInput.value)||0, motivo: motivosPorLinea[idx] };
   });
   reclamoContador += 1;
   reclamosPostventa.push({
@@ -688,7 +697,7 @@ async function enviarSolicitud(){
 
 // ==================== Tarjetas de reclamo (compartidas) ====================
 function renderTarjetaReclamo(r, contexto){
-  const filasItems = r.items.map(it => `<tr><td>${it.codigo}</td><td>${it.descripcion}</td><td>${fmt(it.cantidad,2)}</td><td>${it.motivo||'-'}</td></tr>`).join('');
+  const filasItems = r.items.map(it => `<tr><td>${it.codigo}</td><td>${it.descripcion}</td><td>${fmt(it.cantidadDespachada||0,2)}</td><td>${fmt(it.cantidad,2)}</td><td>${it.motivo||'-'}</td></tr>`).join('');
   const diasPendiente = contexto==='pendiente' ? Math.floor((Date.now()-new Date(r.fecha).getTime())/86400000) : null;
   const badgeDias = diasPendiente!==null ? `<span class="pill ${diasPendiente>=3?'alert':(diasPendiente>=1?'warn':'ok')}" style="margin-left:6px;">${diasPendiente===0?'Hoy':diasPendiente+' día'+(diasPendiente===1?'':'s')+' sin responder'}</span>` : '';
   let acciones = '';
@@ -724,7 +733,7 @@ function renderTarjetaReclamo(r, contexto){
     <div class="small-note" style="margin-top:6px;">${r.motivo}</div>
     ${r.archivo ? `<div style="margin-top:6px;"><a href="${r.archivo.dataUrl}" download="${r.archivo.nombre}" target="_blank" class="pill" style="text-decoration:none;">📎 ${r.archivo.nombre}</a></div>` : ''}
     <table style="margin-top:8px;">
-      <thead><tr><th>Código</th><th>Descripción</th><th>Cantidad</th><th>Motivo</th></tr></thead>
+      <thead><tr><th>Código</th><th>Descripción</th><th>Despachada</th><th>Reclamada</th><th>Motivo</th></tr></thead>
       <tbody>${filasItems}</tbody>
     </table>
     ${r.estado==='rechazado' ? `<div class="small-note" style="margin-top:6px;">Rechazado por ${r.revisadoPor} — ${new Date(r.fechaRevision).toLocaleString('es-CL')}${r.notaRevision?': '+r.notaRevision:''}</div>` : ''}
