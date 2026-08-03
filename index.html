@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Post Venta PWA — Petroflex</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
 <style>
   :root{
     --bg-celeste:#eaf4fb;
@@ -338,17 +340,18 @@
       </div>
     </section>
 
-    <!-- CONFIGURACIÓN SYNC (admin) -->
+    <!-- CONFIGURACIÓN (admin) -->
     <section id="tab-config" class="tab">
       <div class="panel">
         <h2>Sincronización entre equipos</h2>
-        <p class="hint">Para que todos los usuarios vean las mismas solicitudes, este PWA necesita un "bin" de almacenamiento compartido (jsonbin.io). Se crea una sola vez.</p>
+        <p class="hint">Los datos se guardan en Firebase (Firestore) — todos los usuarios ven lo mismo automáticamente, no requiere configuración por equipo.</p>
         <div id="syncStatusBox" class="small-note" style="margin-bottom:10px;"></div>
-        <button class="btn" id="btnCrearBinSync">Activar sincronización en la nube</button>
-        <div class="row" id="filaBinManual" style="margin-top:14px;">
-          <input type="text" id="binIdManual" placeholder="...o pega un ID de bin existente aquí">
-          <button class="btn secondary" id="btnUsarBinManual">Usar este ID</button>
-        </div>
+      </div>
+      <div class="panel" id="panelMigracionJsonbin" style="display:none;">
+        <h2>Migración desde jsonbin (una sola vez)</h2>
+        <p class="hint">Trae lo que ya estaba guardado en el sistema anterior y lo sube a Firestore. Solo hace falta hacerlo una vez — después de confirmar que todo llegó bien, este panel se puede ignorar.</p>
+        <button class="btn" id="btnMigrarJsonbin">Migrar datos desde jsonbin</button>
+        <div id="migracionStatus" class="small-note" style="margin-top:8px;"></div>
       </div>
     </section>
 
@@ -365,10 +368,30 @@ let reclamosPostventa = [];
 let reclamoContador = 0;
 let maestroMotivosReclamo = []; // [{id, motivo}]
 let maestroTiposReclamo = []; // [{id, tipo}]
-let SYNC_BIN_ID = localStorage.getItem('pv_sync_bin_id') || '6a70a17ff5f4af5e29e55574';
-const SYNC_API_KEY = '$2a$10$U8z6AIOUslgzJvlVPbY/0e4AUgRBHFEpSQ0odo6LP.7rKqChiRVLC';
-let SYNC_ACTIVO = !!SYNC_BIN_ID;
-const LS_KEY = 'postventa_pwa_estado';
+// Config de Firebase del proyecto "postventa-pwa" — es seguro que esté visible
+// en el código: a diferencia de la Master Key de jsonbin, esta configuración
+// de Firebase está pensada para ser pública (la protección real está en las
+// reglas de seguridad de Firestore, configuradas del lado del servidor).
+const firebaseConfig = {
+  apiKey: "AIzaSyCBoQQMiid2N1E-_x1N8ltLyahoe7A_buQ",
+  authDomain: "postventa-pwa.firebaseapp.com",
+  projectId: "postventa-pwa",
+  storageBucket: "postventa-pwa.firebasestorage.app",
+  messagingSenderId: "200613890341",
+  appId: "1:200613890341:web:38e0609c7b966e506e72cc"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+// Solo para la migración única desde el sistema anterior (jsonbin) — se puede
+// borrar este bloque una vez confirmada la migración.
+const JSONBIN_ANTERIOR_ID = '6a70a17ff5f4af5e29e55574';
+const JSONBIN_ANTERIOR_KEY = '$2a$10$U8z6AIOUslgzJvlVPbY/0e4AUgRBHFEpSQ0odo6LP.7rKqChiRVLC';
+// Cloudinary para los adjuntos de las solicitudes (cuenta separada, carpeta
+// "postventa"). Si algún día se desconfigura, la app sigue funcionando: los
+// adjuntos se guardan directo en Firestore con un límite más chico (ver
+// LIMITE_ADJUNTO_BYTES más abajo).
+const CLOUDINARY_CLOUD_NAME = 'nasqd2m5';
+const CLOUDINARY_UPLOAD_PRESET = 'postventa_pwa';
 const LS_USUARIO_KEY = 'postventa_pwa_usuario';
 
 const CUENTAS_SEMILLA_VENDEDORES = {"GYAÑEZ": {"passwordHash": "1868d7a53f215e92d6b754310198b375b231f3b2dcec0a4ef07ea2ae9da4baab", "rol": "vendedor", "vendedorAsociado": "GISELLA YAÑEZ  ZONA SUR, YAÑEZ B. GISELA"}, "MCOVARRUBIAS": {"passwordHash": "2847471a0e6c3cdc58d630527c46af90901560194ccc9a11d43e2489312f00ed", "rol": "vendedor", "vendedorAsociado": "MERCEDES COVARRUBIAS"}, "LCUBILLOS": {"passwordHash": "31d974e5a761d40f8e258252752d9bc3e4eb821373e3bb1e7c9287e725c9a9f6", "rol": "vendedor", "vendedorAsociado": "CUBILLOS LUIS"}, "PGARCIA": {"passwordHash": "1718e039bde9c03d711fdb0729d5cc2121f86f515533a4e6004597045c12d1f0", "rol": "vendedor", "vendedorAsociado": "GARCIA SOTO PATRICIO"}, "AHIDALGO": {"passwordHash": "4f63521fa9acdf3f297cabfdaa27a4a060d3f70c4a9f2b6c960bc62378ac993b", "rol": "vendedor", "vendedorAsociado": "HIDALGO R. ANTONIO"}, "EHIDALGO": {"passwordHash": "ebdf4005ba77d31210c5b2ca5a7c95a8406015ebac496044032455e8ec9f218c", "rol": "vendedor", "vendedorAsociado": "HIDALGO EDUARDO"}, "FNAVARRETE": {"passwordHash": "a74c892da1454005f9d3d12459434752bbee1963798709c61b8fec07547e9d52", "rol": "vendedor", "vendedorAsociado": "NAVARRETE A. FERNANDO"}, "JORTIZ": {"passwordHash": "6bb3ef9f7772a4d37e45f4d15789da0b18023bec1a8042d9b54882c2d062278a", "rol": "vendedor", "vendedorAsociado": "ORTIZ JORGE"}, "IPOBLETE": {"passwordHash": "cc50a65ba152bba631d1eed4db9f312ab73419dd139e111c60a096b8b58d5d90", "rol": "vendedor", "vendedorAsociado": "POBLETE IVAN"}, "AREYES": {"passwordHash": "561658e682067a075a11a24f2259e0b7a2b00e6eb4268ea3540d48cc8639529b", "rol": "vendedor", "vendedorAsociado": "REYES ALEJANDRO"}, "HRIVEROS": {"passwordHash": "fdd964c1c12ddf737b916277a17c08a5027c1acdfa71d36ed3daa716ddf9966e", "rol": "vendedor", "vendedorAsociado": "RIVEROS ARMIJO HUGO"}, "LOFICINA": {"passwordHash": "7260ac566d3b9958bc7a3829b422f03f523b7e2e32b9df327b59488581359406", "rol": "vendedor", "vendedorAsociado": "OFICINA LT042019"}, "HJAIME": {"passwordHash": "0fe0a89024b2a78fed05eee07707ae79a464c54cff1f9006d584ce061420d2a2", "rol": "vendedor", "vendedorAsociado": "JAIME HORMANN"}, "XMSODIMAC": {"passwordHash": "4d7a2fc2aa421fc00bbf3f1ef1737018391c1a5731f9638f9ae31e5bce04c665", "rol": "vendedor", "vendedorAsociado": "SODIMAC EMPRESAS X.MARTINEZ"}, "VTORO": {"passwordHash": "bd5c3e2e7d8304cbf37fe7cb4b10de24bc480fca2552cb519b1e64a79747210e", "rol": "vendedor", "vendedorAsociado": "TORO L. VIRGINIA"}, "FREED": {"passwordHash": "37e585f36bd4f641c080a7a41f21e91d0faef4b0125d9b72c371cbda4c7e474a", "rol": "vendedor", "vendedorAsociado": "REED FELIPE"}, "EGUERRERO": {"passwordHash": "3ac46db438bfc18ac3487948a84f4e55c9639b5b15a341cccb6206d035dc7c59", "rol": "vendedor", "vendedorAsociado": "GUERRERO U. EDUARDO"}, "MMUNIZAGA": {"passwordHash": "d46271fca4d6404dd691f50e000e21fb3000255971f6f477a5bfa1db90504e84", "rol": "vendedor", "vendedorAsociado": "MUNIZAGA R. MAURICIO"}, "AGRICOLA": {"passwordHash": "1929c7c2c8006cdd67bf4820f0d62dc6dde56158958915cd4ae3cebc476a77cc", "rol": "vendedor", "vendedorAsociado": "AGRICOLA"}, "COMUNICACION": {"passwordHash": "92d2403be7bf48e127bab5240d456ddfb4ac8355473ea562c76b2f5e224690c9", "rol": "vendedor", "vendedorAsociado": "COMUNICACION"}, "EXPORTACION": {"passwordHash": "18612aacbde4bca06c72cb46da38d629a4ef93d7675f34131fd7f424ad381561", "rol": "vendedor", "vendedorAsociado": "EXPORTACION"}, "GAS": {"passwordHash": "9c1d09e294f8806b506dd724811efa51640331444294685cd128fe14ff50baaf", "rol": "vendedor", "vendedorAsociado": "GAS"}, "OHDPE": {"passwordHash": "577cf6d832a72e3d847fb4f13195c07e4eb0e86e07c598eb13c597ab6dee02a2", "rol": "vendedor", "vendedorAsociado": "OFICINA HDPE"}, "OBALSAS": {"passwordHash": "c8e398ce46c67efa08381fb871a401f6eddc623607ab38491aa2e24fd793d196", "rol": "vendedor", "vendedorAsociado": "OFICINA BALSAS"}, "RBASCUÑAN": {"passwordHash": "d0d39e2201577a0fa70e606ca69c9463564651e46c564f45a1dca2970d47e571", "rol": "vendedor", "vendedorAsociado": "BASCUÑAN Z. ROSA"}, "PETROFLEX": {"passwordHash": "2ce3a107dca493f2a9c702ef6b58f6b6cbc6dd239b5a2a7ccb6fb4dd326d95ab", "rol": "vendedor", "vendedorAsociado": "OFICINA PETROFLEX"}, "XMARTINEZ": {"passwordHash": "887dbae8214cae140c0fc8483efd6b39063ef4f681d8ccdd6b2e514ec6e7cc42", "rol": "vendedor", "vendedorAsociado": "MARTINEZ M. XIMENA"}, "MATERIASPRIMAS": {"passwordHash": "0adf79ad8bd2c538dd64874fc6748ac68312ade8cf0de77f952d3102570e74f5", "rol": "vendedor", "vendedorAsociado": "MATERIAS PRIMAS"}, "MINERAS": {"passwordHash": "855247ca3269a32d599b229f888a783b07f4bb9068253a77bc1ac3b65889f2e2", "rol": "vendedor", "vendedorAsociado": "MINERAS I"}, "SANITARIAS": {"passwordHash": "f3008edb42acbefe4d3be624a373986001113523df8a17c00862d11e338ed560", "rol": "vendedor", "vendedorAsociado": "SANITARIAS"}, "SERVICIOS": {"passwordHash": "014eebce41793fe249405ebb5e456787aac08c3d6f8c2ff76553d387d364654c", "rol": "vendedor", "vendedorAsociado": "SERVICIOS"}, "EMPRESA": {"passwordHash": "8b55048787fb0ca8d0876ba7d1cbc00c4df46f170f7deb1c4dd4602fb43537b8", "rol": "vendedor", "vendedorAsociado": "EMPRESA"}, "AROMAN": {"passwordHash": "59e59f1085573a61abade860e4fe568dd9fe1e29ae74f0ff8086e06535ba3eec", "rol": "vendedor", "vendedorAsociado": "ROMAN ARQUEROS"}, "DISTRIBUIDOR": {"passwordHash": "c008dc1a086c3d4b0a0ece7f3f9b74a5d40b905681540b48beda5ef2eddd647f", "rol": "vendedor", "vendedorAsociado": "DISTRIBUIDOR SOLDAPLAST"}, "BKOCK": {"passwordHash": "87e1917ba210a0dcabb638a4725f76f3692f310fa17be5955156e558e9978316", "rol": "vendedor", "vendedorAsociado": "KOCK SCHURCH BRUNO"}, "EZUNINO": {"passwordHash": "ea65edb579685f4b37b2cf6953737bc5b7ebe27cccdc8f66eb690f48994982e0", "rol": "vendedor", "vendedorAsociado": "ZUNINO MEDINA ELENA"}, "TMARTINEZ": {"passwordHash": "c5e774d54ad57fec6a2f328150964990e88f50ef63e268a81bd400a6626d57bc", "rol": "vendedor", "vendedorAsociado": "MARTINEZ T. TAMARA"}, "IMIRALLES": {"passwordHash": "70903359976833c8e258318647ff6cc8ff15d13ca9b030e865faf6a4757d92fb", "rol": "vendedor", "vendedorAsociado": "MIRALLES IVETTE"}, "ERAMIREZ": {"passwordHash": "16d2aa9ff5e71ecd7f8b63e9d538b28974d8e27d7ee0ea7505c3a312d7891dd0", "rol": "vendedor", "vendedorAsociado": "RAMIREZ M. ELENA"}, "DOFICINA": {"passwordHash": "5403d715caa0347da113da4536413e0adf427d58cb66d9e80fc6a635f249e574", "rol": "vendedor", "vendedorAsociado": "OFICINA DA042019"}, "TMSODIMAC": {"passwordHash": "230ffcff5af3af78f217a76a7cd87d86732dc91ef7fe3d3cf86f5882ad1cbc09", "rol": "vendedor", "vendedorAsociado": "SODIMAC T. MARTINEZ"}, "OPVC": {"passwordHash": "b06168ab94eaf45aabc2983b894e1367610602cbbe0007d6b1fe47bd7d93fb72", "rol": "vendedor", "vendedorAsociado": "OFICINA PVC"}, "ANICOLETTI": {"passwordHash": "c710eb1810196da7673296e76138be434198eeb38a608e4793e62a7d279494d9", "rol": "vendedor", "vendedorAsociado": "A . NICOLETTI"}, "KAM": {"passwordHash": "b784d975c5c6fc33a8de8031b7f775f8262d03e169adb1f3f7e237d68301e6f2", "rol": "vendedor", "vendedorAsociado": "OFICINA KAM RETAIL"}, "OFACT072018": {"passwordHash": "b04a6536b91ada5ad8b87ea839b85523d2883793456f6ec43da3986553a4b48c", "rol": "vendedor", "vendedorAsociado": "OFICINA ACTUALIZACION 072018"}, "LROA": {"passwordHash": "ed4d7ea81ba54d040529f752c821cc65cc906b12ef0ede5e5049ede4793478ed", "rol": "vendedor", "vendedorAsociado": "ROA C. LILIAN"}, "OFACT062022": {"passwordHash": "b04a6536b91ada5ad8b87ea839b85523d2883793456f6ec43da3986553a4b48c", "rol": "vendedor", "vendedorAsociado": "OFICINA ACTUALIZACION 062022"}, "CHERNAN": {"passwordHash": "1bd6f26df1275df512075be7c171b49d365aa3c300462d92461cff648e191bef", "rol": "vendedor", "vendedorAsociado": "HERNAN CARRASCO"}, "STORRES": {"passwordHash": "20f745e5bd5647c90566c4588d5b628ef897da442435afd679e1c725d30b52c2", "rol": "vendedor", "vendedorAsociado": "TORRES S. SEBASTIAN"}, "JTORO": {"passwordHash": "a39f42da4761957bdecbaeec025f18f2024c4abfe0558a47bdb62854d728e244", "rol": "vendedor", "vendedorAsociado": "TORO J. JUAN"}, "AVILCHES": {"passwordHash": "5ebb21f5d5ff54ddf5feabc6606a1c3c786d4bb4837be7c3a93d431298a3e9d6", "rol": "vendedor", "vendedorAsociado": "VILCHES C. ADRIAN"}, "SUBILLA": {"passwordHash": "696037c9b79cea8988e3b542c6176ff562ef4529de1838681be55a8f22ddf295", "rol": "vendedor", "vendedorAsociado": "UBILLA D. SERGIO"}, "JDIAZ": {"passwordHash": "a3daf83c06054aff48a238f987104c0e37e7c7bb1cc1ae2509211b5aadb37692", "rol": "vendedor", "vendedorAsociado": "DIAZ B. JAIME"}, "XFUENTES": {"passwordHash": "9752110b9f6b9b44609c019e6d2d24b929a491c2fc691913398efecd64c1ead5", "rol": "vendedor", "vendedorAsociado": "FUENTES M. XIMENA"}, "RDELGADO": {"passwordHash": "9b5755aec05942ac4fdb25151f03e2e7b962dfa108aeed999ffb4023c158de9b", "rol": "vendedor", "vendedorAsociado": "LOGISTICA"}, "NCHAPARRO": {"passwordHash": "5f4dd6e9c5718d875ed0d6bcdc15e6260c287e8595ef0b7545c1ee6f3606a986", "rol": "vendedor", "vendedorAsociado": "LOGISTICA"}, "JGONZALEZ": {"passwordHash": "478ad1c60ff09b6571cff18a4243849623bd99e1c29dbdb81bb887d5f1db0d44", "rol": "vendedor", "vendedorAsociado": "LOGISTICA"}, "JSOTO": {"passwordHash": "62b0135636e2d39409a4252ae221d7907bdc3a26403961593d374b8e92424d91", "rol": "vendedor", "vendedorAsociado": "LOGISTICA"}, "AGALLEGOS": {"passwordHash": "5b0c5c4b6946b2a93f99409c1f811e990f98a073604aaf5149689d2f6176e31c", "rol": "vendedor", "vendedorAsociado": "LOGISTICA"}, "MPERALTA": {"passwordHash": "28924aa355fe6911352085def14272b3c11f477a9e7ca1c03b00a3b2fddd4323", "rol": "vendedor", "vendedorAsociado": "LOGISTICA"}, "RGONZALEZ": {"passwordHash": "f5b7143928b642d32d6c3c912a0c3c13951f62c9a0fe1586320423efb9c15b69", "rol": "vendedor", "vendedorAsociado": "LOGISTICA"}, "CLYON": {"passwordHash": "85b3ea8a5c84ea31592b48207ca69d6fd2f4cf5dffaafd0575d28b3e7496375b", "rol": "vendedor", "vendedorAsociado": "LOGISTICA"}};
@@ -407,95 +430,133 @@ function puedeVerReclamo(r){
   return r.usuarioSolicitante === usuarioActual;
 }
 
-// ==================== Persistencia local ====================
-function estadoCompartido(){
-  return { cuentas, guiasDatos, reclamosPostventa, reclamoContador, maestroMotivosReclamo, maestroTiposReclamo };
-}
-function guardarEstadoLocal(){
-  try{ localStorage.setItem(LS_KEY, JSON.stringify(estadoCompartido())); }catch(e){ console.warn('No se pudo guardar local:', e); }
-}
-function cargarEstadoLocal(){
+// ==================== Datos (Firestore) ====================
+// Documento único con lo chico (cuentas, contador, motivos, tipos).
+async function dbGuardarConfig(){
   try{
-    const raw = localStorage.getItem(LS_KEY);
-    if(!raw) return;
-    const data = JSON.parse(raw);
-    if(data.cuentas) cuentas = data.cuentas;
-    if(data.guiasDatos) guiasDatos = data.guiasDatos;
-    if(data.reclamosPostventa) reclamosPostventa = data.reclamosPostventa;
-    if(data.reclamoContador) reclamoContador = data.reclamoContador;
-    if(data.maestroMotivosReclamo) maestroMotivosReclamo = data.maestroMotivosReclamo;
-    if(data.maestroTiposReclamo) maestroTiposReclamo = data.maestroTiposReclamo;
-  }catch(e){ console.warn('No se pudo cargar local:', e); }
+    await db.collection('postventa').doc('config').set({ cuentas, reclamoContador, maestroMotivosReclamo, maestroTiposReclamo });
+    return true;
+  }catch(e){ console.warn('No se pudo guardar la configuración en Firestore:', e); return false; }
 }
-function mergePorClave(local, nube, clave){
-  const map = new Map();
-  (nube||[]).forEach(item => map.set(item[clave], item));
-  (local||[]).forEach(item => map.set(item[clave], item)); // local pisa a la nube en empates
-  return [...map.values()];
-}
-function mergeObjetos(local, nube){
-  return { ...(nube||{}), ...(local||{}) };
-}
-// Trae el estado actual de la nube (sin tocar nada local). Devuelve null si
-// no hay sincronización activa o si falla la conexión.
-async function obtenerEstadoNube(){
-  if(!SYNC_ACTIVO || !SYNC_BIN_ID) return null;
+// Reclamos: colección aparte, un documento por solicitud — así cada acción
+// (aprobar, rechazar, cerrar, una solicitud nueva) escribe solo SU propio
+// documento, sin pisar lo que otro usuario esté haciendo al mismo tiempo.
+async function dbGuardarReclamo(r){
   try{
-    const resp = await fetch(`https://api.jsonbin.io/v3/b/${SYNC_BIN_ID}/latest`, { headers:{ 'X-Master-Key':SYNC_API_KEY } });
+    await db.collection('reclamos').doc(r.id).set(r);
+    return true;
+  }catch(e){ console.warn('No se pudo guardar el reclamo en Firestore:', e); return false; }
+}
+async function dbEliminarReclamoRemoto(id){
+  try{
+    await db.collection('reclamos').doc(id).delete();
+    return true;
+  }catch(e){ console.warn('No se pudo eliminar el reclamo en Firestore:', e); return false; }
+}
+// Guías: colección aparte, un documento por folio — evita el problema de
+// tamaño que tenía jsonbin (cada guía pesa muy poco por separado; miles de
+// guías en un solo bloque de texto era lo que hacía fallar la sincronización).
+async function dbReemplazarGuias(lista){
+  try{
+    const actual = await db.collection('guias').get();
+    for(let i=0;i<actual.docs.length;i+=450){
+      const batch = db.batch();
+      actual.docs.slice(i,i+450).forEach(d => batch.delete(d.ref));
+      await batch.commit();
+    }
+    for(let i=0;i<lista.length;i+=450){
+      const batch = db.batch();
+      lista.slice(i,i+450).forEach(g => batch.set(db.collection('guias').doc(String(g.folio)), g));
+      await batch.commit();
+    }
+    return true;
+  }catch(e){ console.warn('No se pudo reemplazar las guías en Firestore:', e); return false; }
+}
+// Trae todo desde Firestore y reemplaza el estado local — se usa al iniciar
+// y en el refresco periódico. No hace falta "mezclar": cada documento es
+// dueño de sus propios datos, así que la última versión guardada siempre es
+// la correcta.
+async function dbCargarTodo(){
+  try{
+    const [configSnap, guiasSnap, reclamosSnap] = await Promise.all([
+      db.collection('postventa').doc('config').get(),
+      db.collection('guias').get(),
+      db.collection('reclamos').get()
+    ]);
+    if(configSnap.exists){
+      const data = configSnap.data();
+      if(data.cuentas) cuentas = data.cuentas;
+      if(data.reclamoContador) reclamoContador = data.reclamoContador;
+      if(data.maestroMotivosReclamo) maestroMotivosReclamo = data.maestroMotivosReclamo;
+      if(data.maestroTiposReclamo) maestroTiposReclamo = data.maestroTiposReclamo;
+    }
+    guiasDatos = guiasSnap.docs.map(d => d.data());
+    reclamosPostventa = reclamosSnap.docs.map(d => d.data());
+    return true;
+  }catch(e){ console.warn('No se pudo cargar datos de Firestore:', e); return false; }
+}
+setInterval(async () => { if(usuarioActual){ await dbCargarTodo(); renderTodo(); } }, 60000);
+
+// ==================== Migración única desde jsonbin ====================
+// Trae lo que estaba guardado en el sistema anterior y lo sube a Firestore
+// con la misma estructura nueva. Se deja disponible solo para el Admin,
+// desde Maestro → Sincronización, y se puede usar más de una vez sin
+// problema (siempre reemplaza con lo último del jsonbin anterior).
+async function migrarDesdeJsonbin(){
+  const status = document.getElementById('migracionStatus');
+  status.textContent = 'Trayendo datos del sistema anterior...';
+  let dataAnterior;
+  try{
+    const resp = await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_ANTERIOR_ID}/latest`, { headers:{ 'X-Master-Key':JSONBIN_ANTERIOR_KEY } });
     const json = await resp.json();
-    return json.record || null;
-  }catch(e){ console.warn('No se pudo traer datos de la nube:', e); return null; }
-}
-// Combina lo que haya en la nube con lo que ya está localmente, sin perder
-// nada de ninguno de los dos lados (usuarios, solicitudes, motivos, tipos).
-// guiasDatos es la excepción a propósito: es un archivo que se reemplaza
-// entero de una sola vez (una carga nueva), no una lista para ir uniendo —
-// por eso solo se toma de la nube cuando NO se acaba de subir un archivo
-// nuevo localmente (ver "preservarGuiasLocal" más abajo).
-function mergeEstadoConNube(dataNube, preservarGuiasLocal){
-  if(!dataNube) return;
-  if(dataNube.cuentas) cuentas = mergeObjetos(cuentas, dataNube.cuentas);
-  if(!preservarGuiasLocal && dataNube.guiasDatos && dataNube.guiasDatos.length) guiasDatos = dataNube.guiasDatos;
-  if(dataNube.reclamosPostventa) reclamosPostventa = mergePorClave(reclamosPostventa, dataNube.reclamosPostventa, 'id');
-  if(dataNube.reclamoContador) reclamoContador = Math.max(reclamoContador, dataNube.reclamoContador);
-  if(dataNube.maestroMotivosReclamo) maestroMotivosReclamo = mergePorClave(maestroMotivosReclamo, dataNube.maestroMotivosReclamo, 'id');
-  if(dataNube.maestroTiposReclamo) maestroTiposReclamo = mergePorClave(maestroTiposReclamo, dataNube.maestroTiposReclamo, 'id');
-}
-// Guarda el estado. SIEMPRE trae primero lo último de la nube y lo mezcla
-// antes de subir — así una acción de un usuario nunca pisa lo que otro
-// acaba de hacer (ej: aprobar un reclamo mientras alguien más envía uno
-// nuevo). Pasa preservarGuiasLocal=true solo justo después de procesar un
-// archivo de Guías nuevo, para que esa carga sea la que quede.
-async function guardarEstado(preservarGuiasLocal){
-  if(SYNC_ACTIVO && SYNC_BIN_ID){
-    const dataNube = await obtenerEstadoNube();
-    mergeEstadoConNube(dataNube, preservarGuiasLocal);
+    dataAnterior = json.record;
+  }catch(e){ status.textContent = 'No se pudo contactar jsonbin: ' + e.message; return; }
+  if(!dataAnterior){ status.textContent = 'No se encontraron datos en el jsonbin anterior.'; return; }
+
+  // Adjuntos: un archivo en base64 grande no cabe en un solo documento de
+  // Firestore (límite ~1MB por documento). Los que sean muy pesados se
+  // dejan fuera de la migración por ahora (hasta que Cloudinary esté
+  // configurado) — se cuentan para avisarte cuáles quedaron pendientes.
+  const LIMITE_ADJUNTO_MIGRACION = 700*1024;
+  let adjuntosOmitidos = 0;
+  const reclamosMigrados = (dataAnterior.reclamosPostventa||[]).map(r => {
+    if(r.archivo && r.archivo.dataUrl && r.archivo.dataUrl.length > LIMITE_ADJUNTO_MIGRACION){
+      adjuntosOmitidos += 1;
+      return { ...r, archivo: null, archivoOmitidoEnMigracion: true };
+    }
+    return r;
+  });
+
+  status.textContent = 'Subiendo a Firestore...';
+  cuentas = dataAnterior.cuentas || cuentas;
+  reclamoContador = dataAnterior.reclamoContador || reclamoContador;
+  maestroMotivosReclamo = dataAnterior.maestroMotivosReclamo || maestroMotivosReclamo;
+  maestroTiposReclamo = dataAnterior.maestroTiposReclamo || maestroTiposReclamo;
+  guiasDatos = dataAnterior.guiasDatos || [];
+  reclamosPostventa = reclamosMigrados;
+
+  const okConfig = await dbGuardarConfig();
+  const okGuias = await dbReemplazarGuias(guiasDatos);
+  let okReclamos = true;
+  for(let i=0;i<reclamosMigrados.length;i+=450){
+    const batch = db.batch();
+    reclamosMigrados.slice(i,i+450).forEach(r => batch.set(db.collection('reclamos').doc(r.id), r));
+    try{ await batch.commit(); }catch(e){ okReclamos = false; console.warn(e); }
   }
-  guardarEstadoLocal();
-  if(SYNC_ACTIVO && SYNC_BIN_ID){
-    try{
-      await fetch(`https://api.jsonbin.io/v3/b/${SYNC_BIN_ID}`, {
-        method:'PUT',
-        headers:{ 'Content-Type':'application/json', 'X-Master-Key':SYNC_API_KEY },
-        body: JSON.stringify(estadoCompartido())
-      });
-    }catch(e){ console.warn('No se pudo sincronizar:', e); }
+  if(okConfig && okGuias && okReclamos){
+    status.textContent = `Listo — ${guiasDatos.length} guías y ${reclamosMigrados.length} solicitudes migradas.` + (adjuntosOmitidos ? ` ${adjuntosOmitidos} adjunto(s) quedaron pendientes (avísame cuando tengamos Cloudinary listo y los resubo).` : '');
+  }else{
+    status.textContent = 'Migración parcial — revisa la consola para más detalle.';
   }
-}
-async function syncPull(){
-  const dataNube = await obtenerEstadoNube();
-  if(!dataNube) return;
-  mergeEstadoConNube(dataNube, false);
-  guardarEstadoLocal();
   renderTodo();
 }
-setInterval(syncPull, 60000);
+document.getElementById('btnMigrarJsonbin').addEventListener('click', () => { if(esAdmin()) migrarDesdeJsonbin(); });
 
 // ==================== Login ====================
 async function bootstrapAdmin(){
   if(Object.keys(cuentas).length === 0){
     cuentas['admin'] = { passwordHash: await hashPassword('admin123'), rol:'admin', vendedorAsociado:'' };
-    guardarEstadoLocal();
+    await dbGuardarConfig();
   }
 }
 document.getElementById('toggleLoginClave').addEventListener('click', () => {
@@ -711,13 +772,20 @@ function mostrarFormularioGuia(guia){
   window.__busquedaNVActual = { nv: guia.nv, data: guia, guia: guia };
   document.getElementById('btnEnviarReclamo').addEventListener('click', enviarSolicitud);
 }
+// Con Cloudinary configurado: hasta 4MB, se sube el archivo y solo se guarda
+// la URL. Sin Cloudinary: el archivo se guarda completo dentro del documento
+// de Firestore, por eso el límite es bastante más chico (un documento de
+// Firestore no puede pesar más de ~1MB en total).
 const LIMITE_ADJUNTO_BYTES = 4*1024*1024;
+const LIMITE_ADJUNTO_SIN_CLOUDINARY = 500*1024;
 function leerArchivoAdjunto(inputEl){
   return new Promise((resolve, reject) => {
     const file = inputEl.files && inputEl.files[0];
     if(!file){ resolve(null); return; }
-    if(file.size > LIMITE_ADJUNTO_BYTES){
-      alert(`El archivo "${file.name}" pesa ${(file.size/1024/1024).toFixed(1)}MB — el máximo permitido es 4MB.`);
+    const hayCloudinary = !!(CLOUDINARY_CLOUD_NAME && CLOUDINARY_UPLOAD_PRESET);
+    const limite = hayCloudinary ? LIMITE_ADJUNTO_BYTES : LIMITE_ADJUNTO_SIN_CLOUDINARY;
+    if(file.size > limite){
+      alert(`El archivo "${file.name}" pesa ${(file.size/1024/1024).toFixed(1)}MB — el máximo permitido por ahora es ${(limite/1024/1024).toFixed(2)}MB.`);
       reject(new Error('archivo_muy_pesado'));
       return;
     }
@@ -726,6 +794,25 @@ function leerArchivoAdjunto(inputEl){
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
   });
+}
+// Si Cloudinary está configurado, sube el archivo ahí y se queda solo con la
+// URL (mucho más liviano para Firestore). Si no está configurado, o si la
+// subida falla, se guarda tal cual (base64) directo en el documento.
+async function subirAdjuntoSiCorresponde(archivo){
+  if(!archivo) return null;
+  if(!CLOUDINARY_CLOUD_NAME || !CLOUDINARY_UPLOAD_PRESET) return archivo;
+  try{
+    const form = new FormData();
+    form.append('file', archivo.dataUrl);
+    form.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
+    const resp = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/auto/upload`, { method:'POST', body: form });
+    const data = await resp.json();
+    if(data.secure_url) return { nombre: archivo.nombre, tipo: archivo.tipo, url: data.secure_url };
+    throw new Error(data.error?.message || 'Cloudinary: error desconocido');
+  }catch(e){
+    console.warn('No se pudo subir el adjunto a Cloudinary, se guarda local:', e);
+    return archivo;
+  }
 }
 async function enviarSolicitud(){
   const ctx = window.__busquedaNVActual;
@@ -758,13 +845,14 @@ async function enviarSolicitud(){
   const observaciones = document.getElementById('motivoReclamo').value.trim();
   let archivo;
   try{ archivo = await leerArchivoAdjunto(document.getElementById('archivoReclamo')); }catch(e){ return; }
+  if(archivo){ status.textContent = 'Subiendo adjunto...'; archivo = await subirAdjuntoSiCorresponde(archivo); }
   const items = idxs.map(idx => {
     const l = ctx.data.lineas[idx];
     const cantInput = document.querySelector(`.cantidadReclamadaNV[data-idx="${idx}"]`);
     return { codigo:l.codigo, descripcion:l.descripcion||'', cantidadDespachada: Number(l.cantidad)||0, cantidad: parseFloat(cantInput.value)||0, motivo: motivosPorLinea[idx] };
   });
   reclamoContador += 1;
-  reclamosPostventa.push({
+  const nuevoReclamo = {
     id: `${Date.now()}_${Math.random().toString(36).slice(2,8)}`,
     numero: `REC-${String(reclamoContador).padStart(3,'0')}`,
     fecha: new Date().toISOString(),
@@ -774,8 +862,11 @@ async function enviarSolicitud(){
     items, tipoReclamo, motivo: observaciones, archivo,
     estado:'pendiente', revisadoPor:null, fechaRevision:null, notaRevision:'',
     numeroNotaCredito:'', fechaCierre:null, usuarioCierre:null
-  });
-  guardarEstado();
+  };
+  reclamosPostventa.push(nuevoReclamo);
+  status.textContent = 'Guardando...';
+  await dbGuardarReclamo(nuevoReclamo);
+  await dbGuardarConfig();
   status.textContent = `Solicitud enviada — quedó pendiente de aprobación.`;
   document.getElementById('resultadoBusquedaNV').innerHTML = '';
   document.getElementById('buscarNVInput').value = '';
@@ -818,7 +909,8 @@ function renderTarjetaReclamo(r, contexto){
       </div>
     </div>
     <div class="small-note" style="margin-top:6px;">${r.motivo}</div>
-    ${r.archivo ? `<div style="margin-top:6px;"><a href="${r.archivo.dataUrl}" download="${r.archivo.nombre}" target="_blank" class="pill" style="text-decoration:none;">📎 ${r.archivo.nombre}</a></div>` : ''}
+    ${r.archivo ? `<div style="margin-top:6px;"><a href="${r.archivo.url||r.archivo.dataUrl}" download="${r.archivo.nombre}" target="_blank" class="pill" style="text-decoration:none;">📎 ${r.archivo.nombre}</a></div>` : ''}
+    ${r.archivoOmitidoEnMigracion ? `<div class="small-note" style="margin-top:4px;">⚠️ El adjunto original de esta solicitud quedó pendiente de migrar (era muy pesado para el traspaso).</div>` : ''}
     <table style="margin-top:8px;">
       <thead><tr><th>Código</th><th>Descripción</th><th>Despachada</th><th>Reclamada</th><th>Motivo</th></tr></thead>
       <tbody>${filasItems}</tbody>
@@ -877,18 +969,18 @@ function aprobarReclamo(id){
   if(!esAdmin()) return;
   const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
   r.estado='aprobado'; r.revisadoPor=usuarioActual; r.fechaRevision=new Date().toISOString();
-  guardarEstado(); renderPendientes(); renderRevision();
+  dbGuardarReclamo(r); renderPendientes(); renderRevision();
 }
 function rechazarReclamo(id){
   if(!esAdmin()) return;
   const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
   const nota = prompt('Motivo del rechazo (opcional):','') || '';
   r.estado='rechazado'; r.revisadoPor=usuarioActual; r.fechaRevision=new Date().toISOString(); r.notaRevision=nota;
-  guardarEstado(); renderPendientes(); renderHistorial();
+  dbGuardarReclamo(r); renderPendientes(); renderHistorial();
 }
 function cambiarNotaRevision(id, valor){
   const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
-  r.notaRevision = valor; guardarEstado();
+  r.notaRevision = valor; dbGuardarReclamo(r);
 }
 function cerrarReclamo(id){
   if(!esAdmin()) return;
@@ -896,7 +988,7 @@ function cerrarReclamo(id){
   const nc = document.getElementById(`ncInput_${id}`).value.trim();
   if(!nc){ alert('Ingresa el N° de Solicitud de Nota de Crédito para poder cerrar.'); return; }
   r.numeroNotaCredito=nc; r.estado='cerrado'; r.fechaCierre=new Date().toISOString(); r.usuarioCierre=usuarioActual;
-  guardarEstado(); renderRevision(); renderHistorial();
+  dbGuardarReclamo(r); renderRevision(); renderHistorial();
 }
 // Elimina una solicitud por completo (para pruebas o errores de un usuario)
 // — solo el Admin puede hacerlo, sin importar el estado en que esté.
@@ -906,7 +998,7 @@ function eliminarReclamo(id){
   if(!confirm(`¿Eliminar por completo la solicitud ${r.numero} (NV ${r.nv})? Esta acción no se puede deshacer.`)) return;
   const idx = reclamosPostventa.findIndex(x=>x.id===id);
   if(idx>=0) reclamosPostventa.splice(idx,1);
-  guardarEstado();
+  dbEliminarReclamoRemoto(id);
   renderPendientes(); renderRevision(); renderHistorial();
 }
 
@@ -1047,13 +1139,14 @@ document.getElementById('btnProcesarNV').addEventListener('click', () => {
   const file = input.files[0];
   status.textContent = 'Procesando...';
   const reader = new FileReader();
-  reader.onload = (e) => {
+  reader.onload = async (e) => {
     try{
       const data = new Uint8Array(e.target.result);
       const wb = XLSX.read(data, {type:'array', cellDates:true});
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(ws, {defval:null}); // encabezados en la fila 1
-      procesarFilasNV(rows);
+      status.textContent = 'Subiendo a Firestore (puede tardar unos segundos con muchas guías)...';
+      await procesarFilasNV(rows);
       status.textContent = `Procesado (${file.name}) — ${new Date().toLocaleTimeString('es-CL')}`;
     }catch(err){
       console.error(err);
@@ -1062,7 +1155,7 @@ document.getElementById('btnProcesarNV').addEventListener('click', () => {
   };
   reader.readAsArrayBuffer(file);
 });
-function procesarFilasNV(rows){
+async function procesarFilasNV(rows){
   const porFolio = {};
   rows.forEach(row => {
     const tipo = String(row['Tipo']||'').trim();
@@ -1096,7 +1189,7 @@ function procesarFilasNV(rows){
     }
   });
   guiasDatos = Object.values(porFolio);
-  guardarEstado(true); // true = no dejar que la versión de la nube pise esta carga recién hecha
+  await dbReemplazarGuias(guiasDatos);
   renderStatsImportNV();
 }
 function renderStatsImportNV(){
@@ -1134,7 +1227,7 @@ function abrirEditarVendedorAsociado(u){
   const nuevo = prompt(`Vendedor(es) asociado(s) para "${u}" (sepáralos con coma si son varios):`, actual);
   if(nuevo === null) return; // canceló
   cuentas[u].vendedorAsociado = nuevo.trim();
-  guardarEstado();
+  dbGuardarConfig();
   renderUsuarios();
 }
 document.getElementById('btnCrearUsuario').addEventListener('click', async () => {
@@ -1148,7 +1241,7 @@ document.getElementById('btnCrearUsuario').addEventListener('click', async () =>
   if(cuentas[nombre]){ status.textContent = 'Ya existe un usuario con ese nombre.'; return; }
   if(rol==='vendedor' && !vendedor){ status.textContent = 'Para un vendedor, indica el "Vendedor asociado" (tal como aparece en las NV).'; return; }
   cuentas[nombre] = { passwordHash: await hashPassword(clave), rol, vendedorAsociado: rol==='vendedor'?vendedor:'' };
-  guardarEstado();
+  dbGuardarConfig();
   document.getElementById('nuevoUsuarioNombre').value = '';
   document.getElementById('nuevoUsuarioClave').value = '';
   document.getElementById('nuevoUsuarioVendedor').value = '';
@@ -1160,7 +1253,7 @@ async function abrirCambiarClave(u){
   const nueva = prompt(`Nueva clave para "${u}":`);
   if(!nueva) return;
   cuentas[u].passwordHash = await hashPassword(nueva);
-  guardarEstado();
+  dbGuardarConfig();
   alert('Clave actualizada.');
 }
 function eliminarUsuario(u){
@@ -1170,7 +1263,7 @@ function eliminarUsuario(u){
   if(cuentas[u].rol==='admin' && admins<=1){ alert('Debe quedar al menos un Administrador.'); return; }
   if(!confirm(`¿Eliminar el usuario "${u}"?`)) return;
   delete cuentas[u];
-  guardarEstado();
+  dbGuardarConfig();
   renderUsuarios();
 }
 
@@ -1189,14 +1282,14 @@ function editarMotivoReclamo(id, valor){
   const m = maestroMotivosReclamo.find(x=>x.id===id);
   if(!m) return;
   m.motivo = valor.trim();
-  guardarEstado();
+  dbGuardarConfig();
 }
 function eliminarMotivoReclamo(id){
   if(!esAdmin()) return;
   if(!confirm('¿Eliminar este motivo?')) return;
   const idx = maestroMotivosReclamo.findIndex(x=>x.id===id);
   if(idx>=0) maestroMotivosReclamo.splice(idx,1);
-  guardarEstado();
+  dbGuardarConfig();
   renderMotivosReclamo();
 }
 document.getElementById('btnAgregarMotivo').addEventListener('click', () => {
@@ -1205,14 +1298,14 @@ document.getElementById('btnAgregarMotivo').addEventListener('click', () => {
   if(!texto) return;
   maestroMotivosReclamo.push({ id:`m_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, motivo:texto });
   document.getElementById('nuevoMotivoTexto').value = '';
-  guardarEstado();
+  dbGuardarConfig();
   renderMotivosReclamo();
 });
 async function sembrarMotivosPorDefecto(){
   if(maestroMotivosReclamo.length) return;
   const defecto = ['Producto dañado','Cantidad incorrecta','Producto equivocado','Faltante','Defecto de fabricación','Error de despacho','Otro'];
   maestroMotivosReclamo = defecto.map((m,i)=>({ id:`m_def_${i+1}`, motivo:m }));
-  await guardarEstado();
+  await dbGuardarConfig();
 }
 
 // ==================== Tipo de Reclamo (admin) ====================
@@ -1230,14 +1323,14 @@ function editarTipoReclamo(id, valor){
   const t = maestroTiposReclamo.find(x=>x.id===id);
   if(!t) return;
   t.tipo = valor.trim();
-  guardarEstado();
+  dbGuardarConfig();
 }
 function eliminarTipoReclamo(id){
   if(!esAdmin()) return;
   if(!confirm('¿Eliminar este tipo de reclamo?')) return;
   const idx = maestroTiposReclamo.findIndex(x=>x.id===id);
   if(idx>=0) maestroTiposReclamo.splice(idx,1);
-  guardarEstado();
+  dbGuardarConfig();
   renderTiposReclamo();
 }
 document.getElementById('btnAgregarTipoReclamo').addEventListener('click', () => {
@@ -1246,61 +1339,29 @@ document.getElementById('btnAgregarTipoReclamo').addEventListener('click', () =>
   if(!texto) return;
   maestroTiposReclamo.push({ id:`t_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, tipo:texto });
   document.getElementById('nuevoTipoReclamoTexto').value = '';
-  guardarEstado();
+  dbGuardarConfig();
   renderTiposReclamo();
 });
 async function sembrarTiposReclamoPorDefecto(){
   if(maestroTiposReclamo.length) return;
   const defecto = ['Calidad','Falta de material','Otro'];
   maestroTiposReclamo = defecto.map((t,i)=>({ id:`t_def_${i+1}`, tipo:t }));
-  await guardarEstado();
+  await dbGuardarConfig();
 }
 
 // ==================== Sincronización (admin) ====================
 function renderSyncStatus(){
   const box = document.getElementById('syncStatusBox');
-  const btnCrear = document.getElementById('btnCrearBinSync');
-  const filaManual = document.getElementById('filaBinManual');
+  const panelMigracion = document.getElementById('panelMigracionJsonbin');
   if(!box) return;
-  box.innerHTML = SYNC_ACTIVO
-    ? `<span class="pill ok">✓ Sincronización activa</span> — ID del bin: <code>${SYNC_BIN_ID}</code>. Este es el ID que ya viene fijo en el archivo — no hace falta tocar nada más acá.`
-    : `<span class="pill warn">Sin sincronizar</span> — cada usuario vería solo lo que carga en su propio computador hasta que actives esto.`;
-  if(btnCrear) btnCrear.style.display = SYNC_ACTIVO ? 'none' : 'inline-block';
-  if(filaManual) filaManual.style.display = SYNC_ACTIVO ? 'none' : 'flex';
+  box.innerHTML = `<span class="pill ok">✓ Conectado a Firestore</span> — proyecto <code>${firebaseConfig.projectId}</code>.`;
+  if(panelMigracion) panelMigracion.style.display = esAdmin() ? 'block' : 'none';
 }
-document.getElementById('btnCrearBinSync').addEventListener('click', async () => {
-  if(!esAdmin()) return;
-  if(SYNC_ACTIVO){ alert('Ya hay una sincronización activa — no hace falta crear otra.'); return; }
-  try{
-    const resp = await fetch('https://api.jsonbin.io/v3/b', {
-      method:'POST',
-      headers:{ 'Content-Type':'application/json', 'X-Master-Key':SYNC_API_KEY, 'X-Bin-Name':'postventa-pwa' },
-      body: JSON.stringify(estadoCompartido())
-    });
-    const json = await resp.json();
-    SYNC_BIN_ID = json?.metadata?.id;
-    if(!SYNC_BIN_ID){ alert('No se pudo crear el bin — revisa la consola.'); return; }
-    SYNC_ACTIVO = true;
-    localStorage.setItem('pv_sync_bin_id', SYNC_BIN_ID);
-    renderSyncStatus();
-    alert(`Sincronización activada. Anota este ID y avísale a Claude para que quede fijo en el archivo antes de repartirlo:\n\n${SYNC_BIN_ID}`);
-  }catch(e){ alert('Error creando el bin: ' + e.message); }
-});
-document.getElementById('btnUsarBinManual').addEventListener('click', () => {
-  if(!esAdmin()) return;
-  const id = document.getElementById('binIdManual').value.trim();
-  if(!id) return;
-  SYNC_BIN_ID = id;
-  SYNC_ACTIVO = true;
-  localStorage.setItem('pv_sync_bin_id', SYNC_BIN_ID);
-  renderSyncStatus();
-  syncPull();
-});
 
 // ==================== Init ====================
 // Agrega las cuentas de vendedores importadas SOLO si ese usuario todavía no
-// existe (ni localmente ni en la nube) — así nunca pisa una clave que ya se
-// haya cambiado después de la carga inicial. Si agrega algo nuevo, lo sube.
+// existe — así nunca pisa una clave que ya se haya cambiado después de la
+// carga inicial. Si agrega algo nuevo, lo sube.
 async function sembrarCuentasVendedores(){
   let huboCambios = false;
   Object.keys(CUENTAS_SEMILLA_VENDEDORES).forEach(usuario => {
@@ -1309,12 +1370,11 @@ async function sembrarCuentasVendedores(){
       huboCambios = true;
     }
   });
-  if(huboCambios) await guardarEstado();
+  if(huboCambios) await dbGuardarConfig();
 }
 (async function init(){
-  cargarEstadoLocal();
+  await dbCargarTodo();
   await bootstrapAdmin();
-  if(SYNC_ACTIVO) await syncPull();
   await sembrarCuentasVendedores();
   await sembrarMotivosPorDefecto();
   await sembrarTiposReclamoPorDefecto();
