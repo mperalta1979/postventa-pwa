@@ -31,6 +31,10 @@
   nav#tabs button{background:none;border:none;color:#cddcee;padding:12px 16px;cursor:pointer;font-size:.88rem;border-bottom:3px solid transparent;}
   nav#tabs button:hover{color:#fff;}
   nav#tabs button.active{color:#fff;border-bottom-color:#5b9bd5;font-weight:600;}
+  nav#subnavMaestro{display:flex;flex-wrap:wrap;padding:0 20px;}
+  nav#subnavMaestro button{background:none;border:none;color:#aebedb;padding:9px 16px;cursor:pointer;font-size:.82rem;border-bottom:3px solid transparent;}
+  nav#subnavMaestro button:hover{color:#fff;}
+  nav#subnavMaestro button.active{color:#fff;border-bottom-color:#5b9bd5;font-weight:600;}
   main{max-width:1200px;margin:20px auto;padding:0 16px 60px;}
   .tab{display:none;}
   .panel{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:18px 22px;margin-bottom:18px;}
@@ -115,9 +119,13 @@
     <button data-tab="pendientes">Solicitudes Pendientes</button>
     <button data-tab="revision">En Revisión</button>
     <button data-tab="historial">Historial</button>
-    <button data-tab="importar" class="admin-only" style="display:none;">Importar NV</button>
-    <button data-tab="usuarios" class="admin-only" style="display:none;">Usuarios</button>
-    <button data-tab="config" class="admin-only" style="display:none;">Sincronización</button>
+    <button id="navMaestro" class="admin-only" style="display:none;">Maestro ▾</button>
+  </nav>
+  <nav id="subnavMaestro" style="display:none;background:var(--navy-dark);">
+    <button data-tab="importar">Importar NV</button>
+    <button data-tab="usuarios">Usuarios</button>
+    <button data-tab="motivos">Motivos Reclamo Post Venta</button>
+    <button data-tab="config">Sincronización</button>
   </nav>
 
   <main>
@@ -220,6 +228,24 @@
       </div>
     </section>
 
+    <!-- MOTIVOS RECLAMO POST VENTA (admin) -->
+    <section id="tab-motivos" class="tab">
+      <div class="panel">
+        <h2>Motivos Reclamo Post Venta</h2>
+        <p class="hint">Estos son los motivos que se pueden elegir por cada código, en "Nueva Solicitud". Agrega, edita o elimina según necesites.</p>
+        <div class="table-scroll" style="max-height:400px;">
+          <table>
+            <thead><tr><th>Motivo</th><th></th></tr></thead>
+            <tbody id="tbodyMotivosReclamo"></tbody>
+          </table>
+        </div>
+        <div class="row" style="margin-top:10px;">
+          <input type="text" id="nuevoMotivoTexto" placeholder="Nuevo motivo...">
+          <button class="btn" id="btnAgregarMotivo">Agregar</button>
+        </div>
+      </div>
+    </section>
+
     <!-- CONFIGURACIÓN SYNC (admin) -->
     <section id="tab-config" class="tab">
       <div class="panel">
@@ -245,6 +271,7 @@ let rolActual = null;
 let nvsDatos = []; // [{nv, cliente, vendedor, fecha(ISO), lineas:[{codigo,descripcion,um,cantidad}]}]
 let reclamosPostventa = [];
 let reclamoContador = 0;
+let maestroMotivosReclamo = []; // [{id, motivo}]
 let SYNC_BIN_ID = localStorage.getItem('pv_sync_bin_id') || '6a70a17ff5f4af5e29e55574';
 const SYNC_API_KEY = '$2a$10$U8z6AIOUslgzJvlVPbY/0e4AUgRBHFEpSQ0odo6LP.7rKqChiRVLC';
 let SYNC_ACTIVO = !!SYNC_BIN_ID;
@@ -289,7 +316,7 @@ function puedeVerReclamo(r){
 
 // ==================== Persistencia local ====================
 function estadoCompartido(){
-  return { cuentas, nvsDatos, reclamosPostventa, reclamoContador };
+  return { cuentas, nvsDatos, reclamosPostventa, reclamoContador, maestroMotivosReclamo };
 }
 function guardarEstadoLocal(){
   try{ localStorage.setItem(LS_KEY, JSON.stringify(estadoCompartido())); }catch(e){ console.warn('No se pudo guardar local:', e); }
@@ -303,6 +330,7 @@ function cargarEstadoLocal(){
     if(data.nvsDatos) nvsDatos = data.nvsDatos;
     if(data.reclamosPostventa) reclamosPostventa = data.reclamosPostventa;
     if(data.reclamoContador) reclamoContador = data.reclamoContador;
+    if(data.maestroMotivosReclamo) maestroMotivosReclamo = data.maestroMotivosReclamo;
   }catch(e){ console.warn('No se pudo cargar local:', e); }
 }
 function mergePorClave(local, nube, clave){
@@ -337,6 +365,7 @@ async function syncPull(){
     if(data.nvsDatos && data.nvsDatos.length) nvsDatos = data.nvsDatos;
     if(data.reclamosPostventa) reclamosPostventa = mergePorClave(reclamosPostventa, data.reclamosPostventa, 'id');
     if(data.reclamoContador) reclamoContador = Math.max(reclamoContador, data.reclamoContador);
+    if(data.maestroMotivosReclamo) maestroMotivosReclamo = mergePorClave(maestroMotivosReclamo, data.maestroMotivosReclamo, 'id');
     guardarEstadoLocal();
     renderTodo();
   }catch(e){ console.warn('No se pudo traer datos de la nube:', e); }
@@ -406,16 +435,29 @@ function renderTodo(){
   renderUsuarios();
   renderStatsImportNV();
   renderSyncStatus();
+  renderMotivosReclamo();
 }
 
 // ==================== Navegación ====================
-document.querySelectorAll('#tabs button[data-tab]').forEach(btn => {
+document.querySelectorAll('#tabs button[data-tab], #subnavMaestro button[data-tab]').forEach(btn => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('#tabs button').forEach(b=>b.classList.remove('active'));
+    document.querySelectorAll('#tabs button, #subnavMaestro button').forEach(b=>b.classList.remove('active'));
     btn.classList.add('active');
     document.querySelectorAll('.tab').forEach(t=>t.style.display='none');
     document.getElementById('tab-'+btn.dataset.tab).style.display='block';
+    if(btn.dataset.tab==='motivos') renderMotivosReclamo();
+    if(SECCIONES_MAESTRO.includes(btn.dataset.tab)) document.getElementById('navMaestro').classList.add('active');
+    else document.getElementById('navMaestro').classList.remove('active');
   });
+});
+const SECCIONES_MAESTRO = ['importar','usuarios','motivos','config'];
+document.getElementById('navMaestro').addEventListener('click', () => {
+  const sub = document.getElementById('subnavMaestro');
+  const abrir = sub.style.display === 'none';
+  sub.style.display = abrir ? 'flex' : 'none';
+  if(abrir && !document.querySelector('#subnavMaestro button.active')){
+    document.querySelector('#subnavMaestro button[data-tab="importar"]').click();
+  }
 });
 
 // ==================== Postventa: búsqueda y nueva solicitud ====================
@@ -435,6 +477,7 @@ function buscarDocumentoNV(){
     return;
   }
   const encabezado = `<div class="small-note" style="margin-bottom:10px;">Cliente: <strong>${nvData.cliente||'-'}</strong> · Vendedor: <strong>${nvData.vendedor||'-'}</strong> · Fecha: <strong>${nvData.fecha?new Date(nvData.fecha).toLocaleDateString('es-CL'):'-'}</strong></div>`;
+  const opcionesMotivo = maestroMotivosReclamo.map(m => `<option value="${m.motivo.replace(/"/g,'&quot;')}">${m.motivo}</option>`).join('');
   const filasLineas = nvData.lineas.map((l,idx) => `
     <tr>
       <td><input type="checkbox" class="chkLineaNV" value="${idx}"></td>
@@ -442,15 +485,22 @@ function buscarDocumentoNV(){
       <td>${l.descripcion||''}</td>
       <td>${l.um||''}</td>
       <td><input type="number" step="0.01" class="cantidadLineaNV" data-idx="${idx}" value="${fmt(Number(l.cantidad)||0,2)}" style="width:100px;"></td>
+      <td>
+        <select class="motivoLineaNV" data-idx="${idx}" style="min-width:170px;">
+          <option value="">Selecciona un motivo...</option>
+          ${opcionesMotivo}
+        </select>
+      </td>
     </tr>`).join('');
   cont.innerHTML = `
     ${encabezado}
     <div class="table-scroll">
       <table>
-        <thead><tr><th></th><th>Código</th><th>Descripción</th><th>UM</th><th>Cantidad</th></tr></thead>
+        <thead><tr><th></th><th>Código</th><th>Descripción</th><th>UM</th><th>Cantidad</th><th>Motivo</th></tr></thead>
         <tbody>${filasLineas}</tbody>
       </table>
     </div>
+    <p class="hint" style="margin-top:6px;">Marca los códigos afectados y elige el motivo de cada uno — pueden ser distintos entre sí (ej: un código llegó dañado y otro venía incompleto).</p>
     <div class="row" style="margin-top:14px;gap:16px;align-items:flex-start;">
       <div>
         <label class="hint" style="display:block;margin-bottom:4px;">Tipo de reclamo</label>
@@ -461,8 +511,8 @@ function buscarDocumentoNV(){
         </select>
       </div>
       <div style="flex:1;min-width:260px;">
-        <label class="hint" style="display:block;margin-bottom:4px;">Detalle del reclamo</label>
-        <textarea id="motivoReclamo" rows="3" placeholder="Describe qué pasó..."></textarea>
+        <label class="hint" style="display:block;margin-bottom:4px;">Observaciones adicionales (opcional)</label>
+        <textarea id="motivoReclamo" rows="3" placeholder="Cualquier detalle extra que quieras agregar..."></textarea>
       </div>
     </div>
     <div class="row" style="margin-top:10px;">
@@ -501,15 +551,22 @@ async function enviarSolicitud(){
   if(!ctx) return;
   const idxs = [...document.querySelectorAll('.chkLineaNV:checked')].map(c => parseInt(c.value));
   if(!idxs.length){ status.textContent = 'Selecciona al menos un código.'; return; }
-  const motivo = document.getElementById('motivoReclamo').value.trim();
-  if(!motivo){ status.textContent = 'Describe el motivo del reclamo.'; return; }
+  // Cada línea marcada necesita su propio motivo — pueden ser distintos entre sí.
+  const motivosPorLinea = {};
+  for(const idx of idxs){
+    const sel = document.querySelector(`.motivoLineaNV[data-idx="${idx}"]`);
+    const valor = sel ? sel.value : '';
+    if(!valor){ status.textContent = `Elige el motivo del código ${ctx.data.lineas[idx].codigo} (falta al menos uno).`; return; }
+    motivosPorLinea[idx] = valor;
+  }
   const tipoReclamo = document.getElementById('tipoReclamoSel').value;
+  const observaciones = document.getElementById('motivoReclamo').value.trim();
   let archivo;
   try{ archivo = await leerArchivoAdjunto(document.getElementById('archivoReclamo')); }catch(e){ return; }
   const items = idxs.map(idx => {
     const l = ctx.data.lineas[idx];
     const cantInput = document.querySelector(`.cantidadLineaNV[data-idx="${idx}"]`);
-    return { codigo:l.codigo, descripcion:l.descripcion||'', um:l.um||'', cantidad: parseFloat(cantInput.value)||0 };
+    return { codigo:l.codigo, descripcion:l.descripcion||'', um:l.um||'', cantidad: parseFloat(cantInput.value)||0, motivo: motivosPorLinea[idx] };
   });
   reclamoContador += 1;
   reclamosPostventa.push({
@@ -518,7 +575,7 @@ async function enviarSolicitud(){
     fecha: new Date().toISOString(),
     usuarioSolicitante: usuarioActual,
     nv: ctx.nv, cliente: ctx.data.cliente||'', vendedor: ctx.data.vendedor||'',
-    items, tipoReclamo, motivo, archivo,
+    items, tipoReclamo, motivo: observaciones, archivo,
     estado:'pendiente', revisadoPor:null, fechaRevision:null, notaRevision:'',
     numeroNotaCredito:'', fechaCierre:null, usuarioCierre:null
   });
@@ -531,7 +588,7 @@ async function enviarSolicitud(){
 
 // ==================== Tarjetas de reclamo (compartidas) ====================
 function renderTarjetaReclamo(r, contexto){
-  const filasItems = r.items.map(it => `<tr><td>${it.codigo}</td><td>${it.descripcion}</td><td>${it.um}</td><td>${fmt(it.cantidad,2)}</td></tr>`).join('');
+  const filasItems = r.items.map(it => `<tr><td>${it.codigo}</td><td>${it.descripcion}</td><td>${it.um}</td><td>${fmt(it.cantidad,2)}</td><td>${it.motivo||'-'}</td></tr>`).join('');
   const diasPendiente = contexto==='pendiente' ? Math.floor((Date.now()-new Date(r.fecha).getTime())/86400000) : null;
   const badgeDias = diasPendiente!==null ? `<span class="pill ${diasPendiente>=3?'alert':(diasPendiente>=1?'warn':'ok')}" style="margin-left:6px;">${diasPendiente===0?'Hoy':diasPendiente+' día'+(diasPendiente===1?'':'s')+' sin responder'}</span>` : '';
   let acciones = '';
@@ -564,7 +621,7 @@ function renderTarjetaReclamo(r, contexto){
     <div class="small-note" style="margin-top:6px;">${r.motivo}</div>
     ${r.archivo ? `<div style="margin-top:6px;"><a href="${r.archivo.dataUrl}" download="${r.archivo.nombre}" target="_blank" class="pill" style="text-decoration:none;">📎 ${r.archivo.nombre}</a></div>` : ''}
     <table style="margin-top:8px;">
-      <thead><tr><th>Código</th><th>Descripción</th><th>UM</th><th>Cantidad</th></tr></thead>
+      <thead><tr><th>Código</th><th>Descripción</th><th>UM</th><th>Cantidad</th><th>Motivo</th></tr></thead>
       <tbody>${filasItems}</tbody>
     </table>
     ${r.estado==='rechazado' ? `<div class="small-note" style="margin-top:6px;">Rechazado por ${r.revisadoPor} — ${new Date(r.fechaRevision).toLocaleString('es-CL')}${r.notaRevision?': '+r.notaRevision:''}</div>` : ''}
@@ -768,6 +825,47 @@ function eliminarUsuario(u){
   renderUsuarios();
 }
 
+// ==================== Motivos Reclamo Post Venta (admin) ====================
+function renderMotivosReclamo(){
+  const tbody = document.getElementById('tbodyMotivosReclamo');
+  if(!tbody) return;
+  tbody.innerHTML = [...maestroMotivosReclamo].sort((a,b)=>a.motivo.localeCompare(b.motivo)).map(m => `
+    <tr>
+      <td><input type="text" value="${(m.motivo||'').replace(/"/g,'&quot;')}" onchange="editarMotivoReclamo('${m.id}', this.value)"></td>
+      <td><button class="btn danger" style="padding:4px 8px;font-size:.72rem;" onclick="eliminarMotivoReclamo('${m.id}')">Eliminar</button></td>
+    </tr>`).join('');
+}
+function editarMotivoReclamo(id, valor){
+  if(!esAdmin()) return;
+  const m = maestroMotivosReclamo.find(x=>x.id===id);
+  if(!m) return;
+  m.motivo = valor.trim();
+  guardarEstado();
+}
+function eliminarMotivoReclamo(id){
+  if(!esAdmin()) return;
+  if(!confirm('¿Eliminar este motivo?')) return;
+  const idx = maestroMotivosReclamo.findIndex(x=>x.id===id);
+  if(idx>=0) maestroMotivosReclamo.splice(idx,1);
+  guardarEstado();
+  renderMotivosReclamo();
+}
+document.getElementById('btnAgregarMotivo').addEventListener('click', () => {
+  if(!esAdmin()) return;
+  const texto = document.getElementById('nuevoMotivoTexto').value.trim();
+  if(!texto) return;
+  maestroMotivosReclamo.push({ id:`m_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, motivo:texto });
+  document.getElementById('nuevoMotivoTexto').value = '';
+  guardarEstado();
+  renderMotivosReclamo();
+});
+async function sembrarMotivosPorDefecto(){
+  if(maestroMotivosReclamo.length) return;
+  const defecto = ['Producto dañado','Cantidad incorrecta','Producto equivocado','Faltante','Defecto de fabricación','Error de despacho','Otro'];
+  maestroMotivosReclamo = defecto.map((m,i)=>({ id:`m_def_${i+1}`, motivo:m }));
+  await guardarEstado();
+}
+
 // ==================== Sincronización (admin) ====================
 function renderSyncStatus(){
   const box = document.getElementById('syncStatusBox');
@@ -828,6 +926,7 @@ async function sembrarCuentasVendedores(){
   await bootstrapAdmin();
   if(SYNC_ACTIVO) await syncPull();
   await sembrarCuentasVendedores();
+  await sembrarMotivosPorDefecto();
   const usuarioGuardado = localStorage.getItem(LS_USUARIO_KEY);
   if(usuarioGuardado && cuentas[usuarioGuardado]){
     usuarioActual = usuarioGuardado;
