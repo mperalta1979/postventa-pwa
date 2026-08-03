@@ -227,7 +227,7 @@
         <p class="hint">Para que todos los usuarios vean las mismas solicitudes, este PWA necesita un "bin" de almacenamiento compartido (jsonbin.io). Se crea una sola vez.</p>
         <div id="syncStatusBox" class="small-note" style="margin-bottom:10px;"></div>
         <button class="btn" id="btnCrearBinSync">Activar sincronización en la nube</button>
-        <div class="row" style="margin-top:14px;">
+        <div class="row" id="filaBinManual" style="margin-top:14px;">
           <input type="text" id="binIdManual" placeholder="...o pega un ID de bin existente aquí">
           <button class="btn secondary" id="btnUsarBinManual">Usar este ID</button>
         </div>
@@ -245,7 +245,7 @@ let rolActual = null;
 let nvsDatos = []; // [{nv, cliente, vendedor, fecha(ISO), lineas:[{codigo,descripcion,um,cantidad}]}]
 let reclamosPostventa = [];
 let reclamoContador = 0;
-let SYNC_BIN_ID = localStorage.getItem('pv_sync_bin_id') || '6a6cf4b9f5f4af5e29db59ea';
+let SYNC_BIN_ID = localStorage.getItem('pv_sync_bin_id') || '6a70a17ff5f4af5e29e55574';
 const SYNC_API_KEY = '$2a$10$U8z6AIOUslgzJvlVPbY/0e4AUgRBHFEpSQ0odo6LP.7rKqChiRVLC';
 let SYNC_ACTIVO = !!SYNC_BIN_ID;
 const LS_KEY = 'postventa_pwa_estado';
@@ -771,13 +771,18 @@ function eliminarUsuario(u){
 // ==================== Sincronización (admin) ====================
 function renderSyncStatus(){
   const box = document.getElementById('syncStatusBox');
+  const btnCrear = document.getElementById('btnCrearBinSync');
+  const filaManual = document.getElementById('filaBinManual');
   if(!box) return;
   box.innerHTML = SYNC_ACTIVO
-    ? `<span class="pill ok">✓ Sincronización activa</span> — ID del bin: <code>${SYNC_BIN_ID}</code>. Este mismo ID debe quedar en el archivo que le repartas a todos los usuarios.`
+    ? `<span class="pill ok">✓ Sincronización activa</span> — ID del bin: <code>${SYNC_BIN_ID}</code>. Este es el ID que ya viene fijo en el archivo — no hace falta tocar nada más acá.`
     : `<span class="pill warn">Sin sincronizar</span> — cada usuario vería solo lo que carga en su propio computador hasta que actives esto.`;
+  if(btnCrear) btnCrear.style.display = SYNC_ACTIVO ? 'none' : 'inline-block';
+  if(filaManual) filaManual.style.display = SYNC_ACTIVO ? 'none' : 'flex';
 }
 document.getElementById('btnCrearBinSync').addEventListener('click', async () => {
   if(!esAdmin()) return;
+  if(SYNC_ACTIVO){ alert('Ya hay una sincronización activa — no hace falta crear otra.'); return; }
   try{
     const resp = await fetch('https://api.jsonbin.io/v3/b', {
       method:'POST',
