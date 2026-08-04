@@ -91,6 +91,17 @@
   .dash-bar-row{display:grid;grid-template-columns:70px 1fr 110px;align-items:center;gap:8px;font-size:.8rem;}
   .dash-bar-track{background:#eef3f8;border-radius:4px;height:16px;overflow:hidden;}
   .dash-bar-fill{background:var(--navy);height:100%;border-radius:4px;}
+  .timeline{position:relative;padding-left:26px;margin-top:6px;}
+  .timeline::before{content:'';position:absolute;left:6px;top:4px;bottom:4px;width:2px;background:var(--border);}
+  .timeline-item{position:relative;padding-bottom:18px;}
+  .timeline-item:last-child{padding-bottom:0;}
+  .timeline-dot{position:absolute;left:-26px;top:2px;width:14px;height:14px;border-radius:50%;background:var(--navy);border:2px solid #fff;box-shadow:0 0 0 2px var(--border);}
+  .timeline-dot.alert{background:var(--alert);}
+  .timeline-dot.ok{background:var(--ok);}
+  .timeline-dot.warn{background:var(--warn);}
+  .timeline-item .titulo{font-weight:600;color:var(--navy);font-size:.88rem;}
+  .timeline-item .meta{font-size:.75rem;color:var(--muted);margin-top:1px;}
+  .timeline-item .comentario{font-size:.82rem;margin-top:3px;}
 </style>
 </head>
 <body>
@@ -138,6 +149,7 @@
     <button data-tab="revision">En Revisión</button>
     <button data-tab="historial">Historial</button>
     <button id="navConsultaGuias" data-tab="consultaguias">Consulta Guías</button>
+    <button data-tab="lineatiempo">Línea de Tiempo</button>
     <button id="navMaestro" class="admin-only" style="display:none;">Maestro ▾</button>
   </nav>
   <nav id="subnavMaestro" style="display:none;background:var(--navy-dark);">
@@ -222,6 +234,26 @@
           <button class="btn" id="btnBuscarConsulta">Buscar</button>
         </div>
         <div id="resultadoConsultaGuia" style="margin-top:16px;"></div>
+      </div>
+    </section>
+
+    <!-- LÍNEA DE TIEMPO -->
+    <section id="tab-lineatiempo" class="tab">
+      <div class="panel">
+        <h2>Línea de Tiempo</h2>
+        <p class="hint">Busca una solicitud por su N°, o por N° de NV, Guía o Factura, para ver todo su avance paso a paso.</p>
+        <div class="row">
+          <select id="tipoBusquedaTiempo">
+            <option value="numero">N° de Solicitud</option>
+            <option value="nv">N° de Nota de Venta</option>
+            <option value="guia">N° de Guía</option>
+            <option value="factura">N° de Factura</option>
+          </select>
+          <input type="text" id="buscarTiempoInput" placeholder="Ingresa el número...">
+          <button class="btn" id="btnBuscarTiempo">Buscar</button>
+        </div>
+        <div id="resultadoBusquedaTiempo" style="margin-top:16px;"></div>
+        <div id="vistaLineaTiempo" style="margin-top:16px;"></div>
       </div>
     </section>
 
@@ -482,7 +514,8 @@ const FACULTADES = [
   { id:'eliminarSolicitudes', label:'Eliminar solicitudes' },
   { id:'accesoMaestro', label:'Acceso al menú Maestro (Importar NV, Usuarios, Motivos, Tipos, Roles, Sincronización)' },
   { id:'verDashboard', label:'Ver el Dashboard' },
-  { id:'consultaGuias', label:'Acceder a Consulta Guías (ver e imprimir el formato de guía)' }
+  { id:'consultaGuias', label:'Acceder a Consulta Guías (ver e imprimir el formato de guía)' },
+  { id:'controlCalidad', label:'Aprobar/Rechazar Control de Calidad por código, en En Revisión' }
 ];
 function facultadesEnBlanco(){
   const o = {}; FACULTADES.forEach(f => o[f.id] = false); return o;
@@ -1064,7 +1097,8 @@ async function enviarSolicitud(){
     guiaFolio: ctx.guia.folio||'', factura: ctx.guia.factura||'', patente: ctx.guia.patente||'', retiradoPor: ctx.guia.retiradoPor||'', operadorGrua: ctx.guia.operadorGrua||'',
     items, tipoReclamo, motivo: observaciones, archivo, posibleDuplicado,
     estado:'pendiente', revisadoPor:null, fechaRevision:null, notaRevision:'',
-    numeroNotaCredito:'', fechaCierre:null, usuarioCierre:null
+    numeroNotaCredito:'', fechaCierre:null, usuarioCierre:null,
+    eventos: [{ tipo:'creada', usuario: usuarioActual, fecha: new Date().toISOString(), comentario:'' }]
   };
   reclamosPostventa.push(nuevoReclamo);
   status.textContent = 'Guardando...';
@@ -1079,7 +1113,19 @@ async function enviarSolicitud(){
 
 // ==================== Tarjetas de reclamo (compartidas) ====================
 function renderTarjetaReclamo(r, contexto){
-  const filasItems = r.items.map(it => `<tr><td>${it.codigo}</td><td>${it.descripcion}</td><td>${fmt(it.cantidadDespachada||0,2)}</td><td>${fmt(it.cantidad,2)}</td><td>${it.motivo||'-'}</td></tr>`).join('');
+  const puedeCalidad = contexto==='revision' && tienePermiso('controlCalidad');
+  const filasItems = r.items.map((it, idx) => {
+    const estadoCalidad = it.estadoCalidad
+      ? `<div class="small-note">${it.estadoCalidad==='aprobado'?'✅ Aprobado':'❌ Rechazado'} por ${it.usuarioCalidad} — ${new Date(it.fechaCalidad).toLocaleDateString('es-CL')}<br>${it.comentarioCalidad||''}</div>`
+      : '';
+    const botonesCalidad = puedeCalidad
+      ? `<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px;">
+          <button class="btn secondary" style="padding:3px 7px;font-size:.7rem;" onclick="marcarCalidadItem('${r.id}',${idx},'aprobado')">Aprueba C.Calidad</button>
+          <button class="btn danger" style="padding:3px 7px;font-size:.7rem;" onclick="marcarCalidadItem('${r.id}',${idx},'rechazado')">Rechaza Control de Calidad</button>
+        </div>`
+      : '';
+    return `<tr><td>${it.codigo}</td><td>${it.descripcion}</td><td>${fmt(it.cantidadDespachada||0,2)}</td><td>${fmt(it.cantidad,2)}</td><td>${it.motivo||'-'}</td><td>${estadoCalidad}${botonesCalidad}</td></tr>`;
+  }).join('');
   const diasPendiente = contexto==='pendiente' ? Math.floor((Date.now()-new Date(r.fecha).getTime())/86400000) : null;
   const badgeDias = diasPendiente!==null ? `<span class="pill ${diasPendiente>=3?'alert':(diasPendiente>=1?'warn':'ok')}" style="margin-left:6px;">${diasPendiente===0?'Hoy':diasPendiente+' día'+(diasPendiente===1?'':'s')+' sin responder'}</span>` : '';
   let acciones = '';
@@ -1117,14 +1163,14 @@ function renderTarjetaReclamo(r, contexto){
     ${r.archivo ? `<div style="margin-top:6px;"><a href="${r.archivo.url||r.archivo.dataUrl}" download="${r.archivo.nombre}" target="_blank" class="pill" style="text-decoration:none;">📎 ${r.archivo.nombre}</a></div>` : ''}
     ${r.archivoOmitidoEnMigracion ? `<div class="small-note" style="margin-top:4px;">⚠️ El adjunto original de esta solicitud quedó pendiente de migrar (era muy pesado para el traspaso).</div>` : ''}
     <table style="margin-top:8px;">
-      <thead><tr><th>Código</th><th>Descripción</th><th>Despachada</th><th>Reclamada</th><th>Motivo</th></tr></thead>
+      <thead><tr><th>Código</th><th>Descripción</th><th>Despachada</th><th>Reclamada</th><th>Motivo</th><th>Control de Calidad</th></tr></thead>
       <tbody>${filasItems}</tbody>
     </table>
     ${r.incompleta ? `<div class="small-note" style="margin-top:6px;">⚠️ Marcada Recibida/Incompleta por ${r.revisadoPor} — ${r.fechaRevision?new Date(r.fechaRevision).toLocaleString('es-CL'):''}${r.comentarioIncompleta?': '+r.comentarioIncompleta:''}</div>` : ''}
     ${r.estado==='aprobado' && r.revisadoPor ? `<div class="small-note" style="margin-top:6px;">Solicitud Recibida por ${r.revisadoPor} — ${new Date(r.fechaRevision).toLocaleString('es-CL')} (a cargo del caso)</div>` : ''}
     ${r.estado==='rechazado' ? `<div class="small-note" style="margin-top:6px;">Rechazado por ${r.revisadoPor} — ${new Date(r.fechaRevision).toLocaleString('es-CL')} · Motivo de rechazo: <strong>${r.notaRevision||'-'}</strong></div>` : ''}
     ${r.estado==='cerrado' ? `<div class="small-note" style="margin-top:6px;">Cerrado por ${r.usuarioCierre} — ${new Date(r.fechaCierre).toLocaleString('es-CL')} · N° Sol. NC: <strong>${r.numeroNotaCredito}</strong></div>` : ''}
-    <div style="margin-top:10px;">${acciones}</div>
+    <div style="margin-top:10px;">${acciones} <button class="btn secondary" onclick="verLineaDeTiempo('${r.id}')">Ver línea de tiempo</button></div>
   </div>`;
 }
 // ---- Edición de una solicitud rechazada (Admin/gestionador) ----
@@ -1183,12 +1229,13 @@ function guardarEdicionReclamo(id){
     const cant = parseFloat(document.querySelector(`.editCantidad_${id}[data-idx="${idx}"]`).value);
     const motivo = document.querySelector(`.editMotivo_${id}[data-idx="${idx}"]`).value;
     if(!cant || cant<=0 || !motivo) ok = false;
-    return { ...it, cantidad: cant||0, motivo };
+    return { ...it, cantidad: cant||0, motivo, estadoCalidad:null, comentarioCalidad:'', usuarioCalidad:null, fechaCalidad:null };
   });
   if(!ok){ alert('Revisa que todos los códigos tengan cantidad reclamada y motivo.'); return; }
   r.tipoReclamo = tipo; r.motivo = obs; r.items = itemsNuevos;
   r.estado = 'pendiente'; r.revisadoPor = null; r.fechaRevision = null; r.notaRevision = '';
   r.incompleta = false; r.comentarioIncompleta = '';
+  registrarEvento(r, 'reabierta', obs);
   dbGuardarReclamo(r);
   crearNotificacion(r.usuarioSolicitante, 'recibida', `Tu solicitud ${r.numero} fue corregida por ${usuarioActual} y vuelve a estar en revisión.`, r.id);
   renderHistorial(); renderPendientes();
@@ -1243,10 +1290,28 @@ function renderHistorial(){
 }
 document.getElementById('filtroHistNV').addEventListener('input', renderHistorial);
 document.getElementById('filtroHistEstado').addEventListener('change', renderHistorial);
+// Registra un paso en la línea de tiempo del reclamo. No se guarda aparte —
+// vive dentro del mismo documento del reclamo, así siempre se guarda junto
+// con el resto de sus cambios.
+const EVENTO_ETIQUETA = {
+  creada:'Solicitud creada',
+  recibida:'Solicitud Recibida',
+  incompleta:'Marcada Recibida/Incompleta',
+  rechazada:'Rechazada',
+  reabierta:'Editada y reabierta',
+  cerrada:'Cerrada',
+  calidad_aprobada:'Control de Calidad — Aprobado',
+  calidad_rechazada:'Control de Calidad — Rechazado'
+};
+function registrarEvento(r, tipo, comentario){
+  if(!r.eventos) r.eventos = [];
+  r.eventos.push({ tipo, usuario: usuarioActual, fecha: new Date().toISOString(), comentario: comentario||'' });
+}
 function aprobarReclamo(id){
   if(!tienePermiso('aprobarSolicitudes')) return;
   const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
   r.estado='aprobado'; r.revisadoPor=usuarioActual; r.fechaRevision=new Date().toISOString();
+  registrarEvento(r, 'recibida');
   dbGuardarReclamo(r);
   crearNotificacion(r.usuarioSolicitante, 'recibida', `Tu solicitud ${r.numero} (NV ${r.nv}) fue recibida por ${usuarioActual}.`, r.id);
   renderPendientes(); renderRevision();
@@ -1260,6 +1325,7 @@ function marcarIncompleta(id){
   comentario = comentario.trim();
   if(!comentario){ alert('Debes escribir un comentario para marcarla como incompleta.'); return; }
   r.incompleta = true; r.comentarioIncompleta = comentario; r.revisadoPor=usuarioActual; r.fechaRevision=new Date().toISOString();
+  registrarEvento(r, 'incompleta', comentario);
   dbGuardarReclamo(r);
   crearNotificacion(r.usuarioSolicitante, 'incompleta', `Tu solicitud ${r.numero} (NV ${r.nv}) fue recibida pero está incompleta: ${comentario}`, r.id);
   renderPendientes();
@@ -1273,6 +1339,7 @@ function rechazarReclamo(id){
   nota = nota.trim();
   if(!nota){ alert('Debes ingresar el motivo de rechazo.'); return; }
   r.estado='rechazado'; r.revisadoPor=usuarioActual; r.fechaRevision=new Date().toISOString(); r.notaRevision=nota;
+  registrarEvento(r, 'rechazada', nota);
   dbGuardarReclamo(r);
   crearNotificacion(r.usuarioSolicitante, 'rechazada', `Tu solicitud ${r.numero} (NV ${r.nv}) fue rechazada. Motivo: ${nota}`, r.id);
   renderPendientes(); renderHistorial();
@@ -1287,7 +1354,27 @@ function cerrarReclamo(id){
   const nc = document.getElementById(`ncInput_${id}`).value.trim();
   if(!nc){ alert('Ingresa el N° de Solicitud de Nota de Crédito para poder cerrar.'); return; }
   r.numeroNotaCredito=nc; r.estado='cerrado'; r.fechaCierre=new Date().toISOString(); r.usuarioCierre=usuarioActual;
+  registrarEvento(r, 'cerrada', `N° Sol. NC: ${nc}`);
   dbGuardarReclamo(r); renderRevision(); renderHistorial();
+}
+// Cada código reclamado se aprueba o rechaza por separado en Control de
+// Calidad — el comentario es obligatorio en ambos casos.
+function marcarCalidadItem(id, idx, resultado){
+  if(!tienePermiso('controlCalidad')) return;
+  const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
+  const item = r.items[idx]; if(!item) return;
+  const etiqueta = resultado==='aprobado' ? 'Aprueba C.Calidad' : 'Rechaza Control de Calidad';
+  let comentario = prompt(`Comentario para "${etiqueta}" — código ${item.codigo} (obligatorio):`, '');
+  if(comentario===null) return;
+  comentario = comentario.trim();
+  if(!comentario){ alert('Debes escribir un comentario.'); return; }
+  item.estadoCalidad = resultado;
+  item.comentarioCalidad = comentario;
+  item.usuarioCalidad = usuarioActual;
+  item.fechaCalidad = new Date().toISOString();
+  registrarEvento(r, resultado==='aprobado'?'calidad_aprobada':'calidad_rechazada', `Código ${item.codigo}: ${comentario}`);
+  dbGuardarReclamo(r);
+  renderRevision();
 }
 // Elimina una solicitud por completo (para pruebas o errores de un usuario)
 // — solo el Admin puede hacerlo, sin importar el estado en que esté.
@@ -1681,6 +1768,79 @@ for (var fila = 0; fila < 6; fila++) {
 }
 <\/script>
 </body></html>`;
+}
+
+// ==================== Línea de Tiempo ====================
+document.getElementById('btnBuscarTiempo').addEventListener('click', buscarParaLineaDeTiempo);
+function buscarParaLineaDeTiempo(){
+  const tipo = document.getElementById('tipoBusquedaTiempo').value;
+  const valor = document.getElementById('buscarTiempoInput').value.trim();
+  const cont = document.getElementById('resultadoBusquedaTiempo');
+  document.getElementById('vistaLineaTiempo').innerHTML = '';
+  if(!valor){ cont.innerHTML = '<p class="hint">Ingresa un número para buscar.</p>'; return; }
+  let candidatas = reclamosPostventa.filter(puedeVerReclamo).filter(r => {
+    if(tipo==='numero') return r.numero.toLowerCase().includes(valor.toLowerCase());
+    if(tipo==='nv') return r.nv === valor;
+    if(tipo==='guia') return String(r.guiaFolio) === valor;
+    if(tipo==='factura') return String(r.factura) === valor;
+    return false;
+  });
+  if(!candidatas.length){ cont.innerHTML = '<p class="hint">No se encontraron solicitudes con ese dato.</p>'; return; }
+  if(candidatas.length===1){ cont.innerHTML=''; renderLineaDeTiempo(candidatas[0].id); return; }
+  cont.innerHTML = `
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>N°</th><th>Fecha</th><th>NV</th><th>Cliente</th><th>Estado</th><th></th></tr></thead>
+        <tbody>
+          ${candidatas.map(r => `<tr>
+            <td>${r.numero}</td><td>${new Date(r.fecha).toLocaleDateString('es-CL')}</td><td>${r.nv||'-'}</td><td>${r.cliente||'-'}</td>
+            <td><span class="pill ${ESTADO_RECLAMO_PILL[r.estado]}">${ESTADO_RECLAMO_LABEL[r.estado]}</span></td>
+            <td><button class="btn" style="padding:4px 10px;font-size:.78rem;" onclick="verLineaDeTiempo('${r.id}')">Ver línea de tiempo</button></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+// Se puede llamar desde cualquier tarjeta (Pendientes/Revisión/Historial) —
+// cambia directo a la pestaña Línea de Tiempo y muestra ese reclamo.
+function verLineaDeTiempo(id){
+  document.querySelector('#tabs button[data-tab="lineatiempo"]').click();
+  document.getElementById('resultadoBusquedaTiempo').innerHTML = '';
+  document.getElementById('buscarTiempoInput').value = '';
+  renderLineaDeTiempo(id);
+}
+const EVENTO_ICONO = { creada:'📝', recibida:'📥', incompleta:'⚠️', rechazada:'❌', reabierta:'🔁', cerrada:'🏁', calidad_aprobada:'✅', calidad_rechazada:'🚫' };
+const EVENTO_COLOR = { creada:'', recibida:'ok', incompleta:'warn', rechazada:'alert', reabierta:'warn', cerrada:'ok', calidad_aprobada:'ok', calidad_rechazada:'alert' };
+function renderLineaDeTiempo(id){
+  const r = reclamosPostventa.find(x=>x.id===id);
+  const cont = document.getElementById('vistaLineaTiempo');
+  if(!r || !puedeVerReclamo(r)){ cont.innerHTML = '<p class="hint">No se encontró la solicitud, o no tienes permiso para verla.</p>'; return; }
+  // Los reclamos creados antes de esta función no tienen "eventos" guardados
+  // — se arma una línea de tiempo básica con lo que sí se sabe de ellos.
+  let eventos = r.eventos && r.eventos.length ? r.eventos.slice() : [];
+  if(!eventos.length){
+    eventos.push({ tipo:'creada', usuario:r.usuarioSolicitante, fecha:r.fecha, comentario:'' });
+    if(r.fechaRevision) eventos.push({ tipo: r.incompleta?'incompleta':(r.estado==='rechazado'?'rechazada':'recibida'), usuario:r.revisadoPor, fecha:r.fechaRevision, comentario: r.incompleta?r.comentarioIncompleta:(r.notaRevision||'') });
+    if(r.fechaCierre) eventos.push({ tipo:'cerrada', usuario:r.usuarioCierre, fecha:r.fechaCierre, comentario:`N° Sol. NC: ${r.numeroNotaCredito||''}` });
+  }
+  eventos.sort((a,b)=> new Date(a.fecha) - new Date(b.fecha));
+  cont.innerHTML = `
+    <div style="border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
+      <div class="row" style="justify-content:space-between;flex-wrap:wrap;">
+        <strong style="color:var(--navy);">${r.numero}</strong>
+        <span class="pill ${ESTADO_RECLAMO_PILL[r.estado]}">${ESTADO_RECLAMO_LABEL[r.estado]}</span>
+      </div>
+      <div class="small-note">NV ${r.nv} · Guía N°: ${r.guiaFolio||'-'} · Cliente: ${r.cliente||'-'} · Solicitante: ${r.usuarioSolicitante}</div>
+      <div class="timeline" style="margin-top:14px;">
+        ${eventos.map(ev => `
+          <div class="timeline-item">
+            <span class="timeline-dot ${EVENTO_COLOR[ev.tipo]||''}"></span>
+            <div class="titulo">${EVENTO_ICONO[ev.tipo]||'•'} ${EVENTO_ETIQUETA[ev.tipo]||ev.tipo}</div>
+            <div class="meta">${ev.usuario||'-'} — ${new Date(ev.fecha).toLocaleString('es-CL')}</div>
+            ${ev.comentario ? `<div class="comentario">${ev.comentario}</div>` : ''}
+          </div>`).join('')}
+      </div>
+    </div>`;
 }
 
 // ==================== Importar NV (admin) ====================
