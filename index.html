@@ -122,6 +122,10 @@
       <div class="sub">Petroflex S.A.</div>
     </div>
     <div class="userbox">
+      <div style="position:relative;">
+        <button class="btn secondary" id="btnNotificaciones" title="Notificaciones">🔔<span id="notifBadge" class="pill alert" style="display:none;margin-left:4px;padding:1px 6px;"></span></button>
+        <div id="notifPanel" style="display:none;position:absolute;right:0;top:calc(100% + 6px);width:340px;max-height:420px;overflow-y:auto;background:#fff;border:1px solid var(--border);border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.15);z-index:80;padding:6px;"></div>
+      </div>
       <span id="usuarioActualLbl"></span>
       <button class="btn secondary" id="btnCerrarSesion">Cerrar sesión</button>
     </div>
@@ -253,7 +257,7 @@
         </div>
         <div class="table-scroll">
           <table>
-            <thead><tr><th>N°</th><th>Fecha</th><th>NV</th><th>Guía</th><th>Cliente</th><th>Solicitante</th><th>Tipo</th><th>Estado</th><th>N° Sol. Nota Crédito</th><th></th></tr></thead>
+            <thead><tr><th>N°</th><th>Fecha</th><th>NV</th><th>Guía</th><th>Cliente</th><th>Solicitante</th><th>Tipo</th><th>Estado</th><th>Motivo Rechazo</th><th>N° Sol. Nota Crédito</th><th></th></tr></thead>
             <tbody id="tbodyHistorial"></tbody>
           </table>
         </div>
@@ -365,6 +369,7 @@ let usuarioActual = null;
 let rolActual = null;
 let guiasDatos = []; // [{folio, fecha(ISO), factura, nv, cliente, vendedor, patente, retiradoPor, operadorGrua, lineas:[{codigo,descripcion,cantidad,numoc}]}]
 let reclamosPostventa = [];
+let notificaciones = []; // [{id, para: usuario|'ADMIN', tipo, mensaje, reclamoId, leida, fecha}]
 let reclamoContador = 0;
 let maestroMotivosReclamo = []; // [{id, motivo}]
 let maestroTiposReclamo = []; // [{id, tipo}]
@@ -472,16 +477,35 @@ async function dbReemplazarGuias(lista){
     return true;
   }catch(e){ console.warn('No se pudo reemplazar las guías en Firestore:', e); return false; }
 }
+// Notificaciones: colección aparte, un documento por aviso. "para" puede ser
+// un usuario puntual (el vendedor solicitante) o el texto 'ADMIN', que
+// significa "cualquier cuenta con rol admin la debe ver" (puede haber más
+// de un Admin/gestionador).
+async function dbCrearNotificacion(n){
+  try{ await db.collection('notificaciones').doc(n.id).set(n); return true; }
+  catch(e){ console.warn('No se pudo crear la notificación en Firestore:', e); return false; }
+}
+async function dbMarcarNotificacionLeida(id){
+  try{ await db.collection('notificaciones').doc(id).update({ leida:true }); return true; }
+  catch(e){ console.warn('No se pudo marcar la notificación como leída:', e); return false; }
+}
+function crearNotificacion(para, tipo, mensaje, reclamoId){
+  const n = { id:`ntf_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, para, tipo, mensaje, reclamoId: reclamoId||null, leida:false, fecha:new Date().toISOString() };
+  notificaciones.push(n);
+  dbCrearNotificacion(n);
+  renderNotifBadge();
+}
 // Trae todo desde Firestore y reemplaza el estado local — se usa al iniciar
 // y en el refresco periódico. No hace falta "mezclar": cada documento es
 // dueño de sus propios datos, así que la última versión guardada siempre es
 // la correcta.
 async function dbCargarTodo(){
   try{
-    const [configSnap, guiasSnap, reclamosSnap] = await Promise.all([
+    const [configSnap, guiasSnap, reclamosSnap, notifSnap] = await Promise.all([
       db.collection('postventa').doc('config').get(),
       db.collection('guias').get(),
-      db.collection('reclamos').get()
+      db.collection('reclamos').get(),
+      db.collection('notificaciones').get()
     ]);
     if(configSnap.exists){
       const data = configSnap.data();
@@ -492,10 +516,11 @@ async function dbCargarTodo(){
     }
     guiasDatos = guiasSnap.docs.map(d => d.data());
     reclamosPostventa = reclamosSnap.docs.map(d => d.data());
+    notificaciones = notifSnap.docs.map(d => d.data());
     return true;
   }catch(e){ console.warn('No se pudo cargar datos de Firestore:', e); return false; }
 }
-setInterval(async () => { if(usuarioActual){ await dbCargarTodo(); renderTodo(); } }, 60000);
+setInterval(async () => { if(usuarioActual){ await dbCargarTodo(); renderTodo(); renderNotifBadge(); } }, 30000);
 
 // ==================== Migración única desde jsonbin ====================
 // Trae lo que estaba guardado en el sistema anterior y lo sube a Firestore
@@ -617,7 +642,47 @@ function renderTodo(){
   renderSyncStatus();
   renderMotivosReclamo();
   renderTiposReclamo();
+  renderNotifBadge();
 }
+// ==================== Notificaciones ====================
+const NOTIF_ICONO = { nueva_solicitud:'🆕', recibida:'📥', incompleta:'⚠️', rechazada:'❌' };
+function notificacionesDe(usuario){
+  return notificaciones.filter(n => n.para===usuario || (n.para==='ADMIN' && esAdmin()));
+}
+function renderNotifBadge(){
+  if(!usuarioActual) return;
+  const badge = document.getElementById('notifBadge');
+  const pendientes = notificacionesDe(usuarioActual).filter(n => !n.leida).length;
+  badge.textContent = pendientes;
+  badge.style.display = pendientes ? 'inline-block' : 'none';
+  if(document.getElementById('notifPanel').style.display === 'block') renderNotifPanel();
+}
+function renderNotifPanel(){
+  const panel = document.getElementById('notifPanel');
+  const lista = notificacionesDe(usuarioActual).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
+  panel.innerHTML = lista.length ? lista.map(n => `
+    <div onclick="marcarNotificacionLeida('${n.id}')" style="padding:8px;border-bottom:1px solid var(--border);cursor:pointer;${n.leida?'opacity:.55;':''}">
+      <div style="font-size:.82rem;">${NOTIF_ICONO[n.tipo]||'🔔'} ${n.mensaje}</div>
+      <div class="small-note" style="margin-top:2px;">${new Date(n.fecha).toLocaleString('es-CL')}</div>
+    </div>`).join('') : `<div class="small-note" style="padding:10px;">No tienes notificaciones.</div>`;
+}
+function marcarNotificacionLeida(id){
+  const n = notificaciones.find(x=>x.id===id); if(!n || n.leida) return;
+  n.leida = true;
+  dbMarcarNotificacionLeida(id);
+  renderNotifBadge();
+}
+document.getElementById('btnNotificaciones').addEventListener('click', (e) => {
+  e.stopPropagation();
+  const panel = document.getElementById('notifPanel');
+  const abrir = panel.style.display !== 'block';
+  panel.style.display = abrir ? 'block' : 'none';
+  if(abrir) renderNotifPanel();
+});
+document.addEventListener('click', (e) => {
+  const panel = document.getElementById('notifPanel');
+  if(panel.style.display==='block' && !panel.contains(e.target) && e.target.id!=='btnNotificaciones') panel.style.display = 'none';
+});
 
 // ==================== Navegación ====================
 document.querySelectorAll('#tabs button[data-tab], #subnavMaestro button[data-tab]').forEach(btn => {
@@ -754,8 +819,8 @@ function mostrarFormularioGuia(guia){
         </select>
       </div>
       <div style="flex:1;min-width:260px;">
-        <label class="hint" style="display:block;margin-bottom:4px;">Observaciones adicionales (opcional)</label>
-        <textarea id="motivoReclamo" rows="3" placeholder="Cualquier detalle extra que quieras agregar..."></textarea>
+        <label class="hint" style="display:block;margin-bottom:4px;">Observaciones (obligatorio)</label>
+        <textarea id="motivoReclamo" rows="3" placeholder="Detalla qué pasó..."></textarea>
       </div>
     </div>
     <div class="row" style="margin-top:10px;">
@@ -766,11 +831,13 @@ function mostrarFormularioGuia(guia){
     </div>
     <div class="row" style="margin-top:10px;">
       <button class="btn" id="btnEnviarReclamo">Enviar solicitud de Postventa</button>
+      <button class="btn secondary" id="btnLimpiarSolicitud" type="button">Limpiar solicitud</button>
       <span id="envioReclamoStatus" class="hint"></span>
     </div>
   `;
   window.__busquedaNVActual = { nv: guia.nv, data: guia, guia: guia };
   document.getElementById('btnEnviarReclamo').addEventListener('click', enviarSolicitud);
+  document.getElementById('btnLimpiarSolicitud').addEventListener('click', () => mostrarFormularioGuia(guia));
 }
 // Con Cloudinary configurado: hasta 4MB, se sube el archivo y solo se guarda
 // la URL. Sin Cloudinary: el archivo se guarda completo dentro del documento
@@ -843,6 +910,20 @@ async function enviarSolicitud(){
   if(excedidas.length && !confirm(`¿Está seguro que desea reclamar más cantidad que la despachada${excedidas.length>1?` en los códigos ${excedidas.join(', ')}`:` en el código ${excedidas[0]}`}?`)) return;
   const tipoReclamo = document.getElementById('tipoReclamoSel').value;
   const observaciones = document.getElementById('motivoReclamo').value.trim();
+  if(!observaciones){ status.textContent = 'Las observaciones son obligatorias — cuenta brevemente qué pasó.'; return; }
+  // Avisa si esta NV, Guía o Factura ya tiene otra solicitud (de cualquier
+  // estado) — puede ser una duplicidad real o un seguimiento legítimo de un
+  // reclamo anterior, así que se deja decidir a quien está enviando.
+  const yaExiste = reclamosPostventa.some(r =>
+    (ctx.nv && r.nv === ctx.nv) ||
+    (ctx.guia.folio && r.guiaFolio === ctx.guia.folio) ||
+    (ctx.guia.factura && r.factura === ctx.guia.factura)
+  );
+  let posibleDuplicado = false;
+  if(yaExiste){
+    if(!confirm('Numero de NV, Guia o Factura ya cuenta con solicitud realizada ¿Desea continuar?')) return;
+    posibleDuplicado = true;
+  }
   let archivo;
   try{ archivo = await leerArchivoAdjunto(document.getElementById('archivoReclamo')); }catch(e){ return; }
   if(archivo){ status.textContent = 'Subiendo adjunto...'; archivo = await subirAdjuntoSiCorresponde(archivo); }
@@ -859,7 +940,7 @@ async function enviarSolicitud(){
     usuarioSolicitante: usuarioActual,
     nv: ctx.nv, cliente: ctx.data.cliente||'', vendedor: ctx.data.vendedor||'',
     guiaFolio: ctx.guia.folio||'', factura: ctx.guia.factura||'', patente: ctx.guia.patente||'', retiradoPor: ctx.guia.retiradoPor||'', operadorGrua: ctx.guia.operadorGrua||'',
-    items, tipoReclamo, motivo: observaciones, archivo,
+    items, tipoReclamo, motivo: observaciones, archivo, posibleDuplicado,
     estado:'pendiente', revisadoPor:null, fechaRevision:null, notaRevision:'',
     numeroNotaCredito:'', fechaCierre:null, usuarioCierre:null
   };
@@ -867,10 +948,11 @@ async function enviarSolicitud(){
   status.textContent = 'Guardando...';
   await dbGuardarReclamo(nuevoReclamo);
   await dbGuardarConfig();
-  status.textContent = `Solicitud enviada — quedó pendiente de aprobación.`;
+  crearNotificacion('ADMIN', 'nueva_solicitud', `Nueva solicitud ${nuevoReclamo.numero} de ${usuarioActual} (NV ${nuevoReclamo.nv}).`, nuevoReclamo.id);
   document.getElementById('resultadoBusquedaNV').innerHTML = '';
   document.getElementById('buscarNVInput').value = '';
   renderPendientes();
+  alert('Solicitud recibida, tiempo de respuesta 1 a 5 dia habiles, revise pestaña En revision');
 }
 
 // ==================== Tarjetas de reclamo (compartidas) ====================
@@ -880,7 +962,8 @@ function renderTarjetaReclamo(r, contexto){
   const badgeDias = diasPendiente!==null ? `<span class="pill ${diasPendiente>=3?'alert':(diasPendiente>=1?'warn':'ok')}" style="margin-left:6px;">${diasPendiente===0?'Hoy':diasPendiente+' día'+(diasPendiente===1?'':'s')+' sin responder'}</span>` : '';
   let acciones = '';
   if(contexto==='pendiente' && esAdmin()){
-    acciones = `<button class="btn" onclick="aprobarReclamo('${r.id}')">Aprobar</button>
+    acciones = `<button class="btn" onclick="aprobarReclamo('${r.id}')">Solicitud Recibida</button>
+      <button class="btn secondary" onclick="marcarIncompleta('${r.id}')">Recibida/Incompleta</button>
       <button class="btn danger" onclick="rechazarReclamo('${r.id}')">Rechazar</button>
       <button class="btn danger" onclick="eliminarReclamo('${r.id}')">Eliminar</button>`;
   } else if(contexto==='revision' && esAdmin()){
@@ -898,10 +981,10 @@ function renderTarjetaReclamo(r, contexto){
         <button class="btn danger" onclick="eliminarReclamo('${r.id}')">Eliminar</button>
       </div>`;
   }
-  return `<div style="border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:12px;">
+  return `<div id="tarjeta_${r.id}" style="border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:12px;">
     <div class="row" style="justify-content:space-between;flex-wrap:wrap;">
       <div>
-        <strong style="color:var(--navy);">${r.numero}</strong> <span class="pill ${ESTADO_RECLAMO_PILL[r.estado]}">${ESTADO_RECLAMO_LABEL[r.estado]}</span>${badgeDias}
+        <strong style="color:var(--navy);">${r.numero}</strong> <span class="pill ${ESTADO_RECLAMO_PILL[r.estado]}">${ESTADO_RECLAMO_LABEL[r.estado]}</span>${r.posibleDuplicado ? ` <span class="pill alert">⚠️ Posible duplicado (NV/Guía/Factura)</span>` : ''}${r.incompleta ? ` <span class="pill warn">⚠️ Incompleta</span>` : ''}${badgeDias}
         <div class="small-note">NV ${r.nv} · Guía N°: ${r.guiaFolio||'-'} · Factura: ${r.factura||'-'} · Cliente: ${r.cliente||'-'}</div>
         <div class="small-note">Patente: ${r.patente||'-'} · Retirado por: ${r.retiradoPor||'-'} · Operador de Grúa: ${r.operadorGrua||'-'}</div>
         <div class="small-note">Solicitado por ${r.usuarioSolicitante} — ${new Date(r.fecha).toLocaleString('es-CL')}</div>
@@ -915,11 +998,80 @@ function renderTarjetaReclamo(r, contexto){
       <thead><tr><th>Código</th><th>Descripción</th><th>Despachada</th><th>Reclamada</th><th>Motivo</th></tr></thead>
       <tbody>${filasItems}</tbody>
     </table>
-    ${r.estado==='rechazado' ? `<div class="small-note" style="margin-top:6px;">Rechazado por ${r.revisadoPor} — ${new Date(r.fechaRevision).toLocaleString('es-CL')}${r.notaRevision?': '+r.notaRevision:''}</div>` : ''}
+    ${r.incompleta ? `<div class="small-note" style="margin-top:6px;">⚠️ Marcada Recibida/Incompleta por ${r.revisadoPor} — ${r.fechaRevision?new Date(r.fechaRevision).toLocaleString('es-CL'):''}${r.comentarioIncompleta?': '+r.comentarioIncompleta:''}</div>` : ''}
+    ${r.estado==='aprobado' && r.revisadoPor ? `<div class="small-note" style="margin-top:6px;">Solicitud Recibida por ${r.revisadoPor} — ${new Date(r.fechaRevision).toLocaleString('es-CL')} (a cargo del caso)</div>` : ''}
+    ${r.estado==='rechazado' ? `<div class="small-note" style="margin-top:6px;">Rechazado por ${r.revisadoPor} — ${new Date(r.fechaRevision).toLocaleString('es-CL')} · Motivo de rechazo: <strong>${r.notaRevision||'-'}</strong></div>` : ''}
     ${r.estado==='cerrado' ? `<div class="small-note" style="margin-top:6px;">Cerrado por ${r.usuarioCierre} — ${new Date(r.fechaCierre).toLocaleString('es-CL')} · N° Sol. NC: <strong>${r.numeroNotaCredito}</strong></div>` : ''}
     <div style="margin-top:10px;">${acciones}</div>
   </div>`;
 }
+// ---- Edición de una solicitud rechazada (Admin/gestionador) ----
+// Corrige los datos y la reabre: vuelve a "pendiente" para que pase por el
+// flujo de revisión de nuevo, y le avisa al vendedor.
+function renderFormularioEdicionReclamo(r){
+  const filas = r.items.map((it, idx) => `
+    <tr>
+      <td>${it.codigo}</td><td>${it.descripcion}</td><td>${fmt(it.cantidadDespachada||0,2)}</td>
+      <td><input type="number" step="0.01" min="0" class="editCantidad_${r.id}" data-idx="${idx}" value="${fmt(it.cantidad,2)}" style="width:100px;"></td>
+      <td>
+        <select class="editMotivo_${r.id}" data-idx="${idx}" style="min-width:170px;">
+          ${maestroMotivosReclamo.map(m => `<option value="${m.motivo.replace(/"/g,'&quot;')}" ${m.motivo===it.motivo?'selected':''}>${m.motivo}</option>`).join('')}
+        </select>
+      </td>
+    </tr>`).join('');
+  return `<tr id="filaHist_${r.id}"><td colspan="11" style="background:#f7fafd;">
+    <div style="border:1px solid var(--navy);border-radius:10px;padding:14px 16px;margin:8px 0;">
+      <strong style="color:var(--navy);">Editando ${r.numero}</strong> <span class="small-note">NV ${r.nv} · Guía N°: ${r.guiaFolio||'-'}</span>
+      <div style="margin-top:8px;">
+        <label class="hint" style="display:block;margin-bottom:3px;">Tipo de reclamo</label>
+        <select id="editTipo_${r.id}">
+          ${maestroTiposReclamo.map(t => `<option value="${t.tipo.replace(/"/g,'&quot;')}" ${t.tipo===r.tipoReclamo?'selected':''}>${t.tipo}</option>`).join('')}
+        </select>
+      </div>
+      <div style="margin-top:8px;">
+        <label class="hint" style="display:block;margin-bottom:3px;">Observaciones (obligatorio)</label>
+        <textarea id="editObs_${r.id}" rows="2">${r.motivo||''}</textarea>
+      </div>
+      <table style="margin-top:8px;">
+        <thead><tr><th>Código</th><th>Descripción</th><th>Despachada</th><th>Reclamada</th><th>Motivo</th></tr></thead>
+        <tbody>${filas}</tbody>
+      </table>
+      <div class="row" style="margin-top:10px;">
+        <button class="btn" onclick="guardarEdicionReclamo('${r.id}')">Guardar cambios y reabrir</button>
+        <button class="btn secondary" onclick="cancelarEdicionReclamo('${r.id}')">Cancelar</button>
+      </div>
+    </div>
+  </td></tr>`;
+}
+function abrirEdicionReclamo(id){
+  if(!esAdmin()) return;
+  const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
+  const el = document.getElementById(`filaHist_${id}`); if(!el) return;
+  el.outerHTML = renderFormularioEdicionReclamo(r);
+}
+function cancelarEdicionReclamo(id){ renderHistorial(); }
+function guardarEdicionReclamo(id){
+  if(!esAdmin()) return;
+  const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
+  const obs = document.getElementById(`editObs_${id}`).value.trim();
+  if(!obs){ alert('Las observaciones son obligatorias.'); return; }
+  const tipo = document.getElementById(`editTipo_${id}`).value;
+  let ok = true;
+  const itemsNuevos = r.items.map((it, idx) => {
+    const cant = parseFloat(document.querySelector(`.editCantidad_${id}[data-idx="${idx}"]`).value);
+    const motivo = document.querySelector(`.editMotivo_${id}[data-idx="${idx}"]`).value;
+    if(!cant || cant<=0 || !motivo) ok = false;
+    return { ...it, cantidad: cant||0, motivo };
+  });
+  if(!ok){ alert('Revisa que todos los códigos tengan cantidad reclamada y motivo.'); return; }
+  r.tipoReclamo = tipo; r.motivo = obs; r.items = itemsNuevos;
+  r.estado = 'pendiente'; r.revisadoPor = null; r.fechaRevision = null; r.notaRevision = '';
+  r.incompleta = false; r.comentarioIncompleta = '';
+  dbGuardarReclamo(r);
+  crearNotificacion(r.usuarioSolicitante, 'recibida', `Tu solicitud ${r.numero} fue corregida por ${usuarioActual} y vuelve a estar en revisión.`, r.id);
+  renderHistorial(); renderPendientes();
+}
+
 function renderPendientes(){
   const cont = document.getElementById('listaPendientes');
   const empty = document.getElementById('emptyPendientes');
@@ -955,12 +1107,16 @@ function renderHistorial(){
   lista.sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
   if(!lista.length){ tbody.innerHTML=''; empty.style.display='block'; return; }
   empty.style.display = 'none';
-  tbody.innerHTML = lista.map(r => `<tr>
-    <td>${r.numero}</td><td>${new Date(r.fecha).toLocaleDateString('es-CL')}</td><td>${r.nv}</td><td>${r.guiaFolio||'-'}</td>
+  tbody.innerHTML = lista.map(r => `<tr id="filaHist_${r.id}">
+    <td>${r.numero}${r.posibleDuplicado ? ' ⚠️' : ''}</td><td>${new Date(r.fecha).toLocaleDateString('es-CL')}</td><td>${r.nv}</td><td>${r.guiaFolio||'-'}</td>
     <td>${r.cliente||'-'}</td><td>${r.usuarioSolicitante}</td><td>${TIPO_RECLAMO_LABEL[r.tipoReclamo] || r.tipoReclamo}</td>
     <td><span class="pill ${ESTADO_RECLAMO_PILL[r.estado]}">${ESTADO_RECLAMO_LABEL[r.estado]}</span></td>
+    <td>${r.estado==='rechazado' ? (r.notaRevision||'-') : '-'}</td>
     <td>${r.numeroNotaCredito||'-'}</td>
-    <td>${esAdmin() ? `<button class="btn danger" style="padding:4px 8px;font-size:.72rem;" onclick="eliminarReclamo('${r.id}')">Eliminar</button>` : ''}</td>
+    <td>
+      ${esAdmin() && r.estado==='rechazado' ? `<button class="btn secondary" style="padding:4px 8px;font-size:.72rem;" onclick="abrirEdicionReclamo('${r.id}')">Editar</button>` : ''}
+      ${esAdmin() ? `<button class="btn danger" style="padding:4px 8px;font-size:.72rem;" onclick="eliminarReclamo('${r.id}')">Eliminar</button>` : ''}
+    </td>
   </tr>`).join('');
 }
 document.getElementById('filtroHistNV').addEventListener('input', renderHistorial);
@@ -969,14 +1125,35 @@ function aprobarReclamo(id){
   if(!esAdmin()) return;
   const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
   r.estado='aprobado'; r.revisadoPor=usuarioActual; r.fechaRevision=new Date().toISOString();
-  dbGuardarReclamo(r); renderPendientes(); renderRevision();
+  dbGuardarReclamo(r);
+  crearNotificacion(r.usuarioSolicitante, 'recibida', `Tu solicitud ${r.numero} (NV ${r.nv}) fue recibida por ${usuarioActual}.`, r.id);
+  renderPendientes(); renderRevision();
 }
+// El comentario es obligatorio — si cancela o lo deja vacío, no hace nada.
+function marcarIncompleta(id){
+  if(!esAdmin()) return;
+  const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
+  let comentario = prompt('¿Qué falta o qué está incompleto en esta solicitud? (obligatorio)', '');
+  if(comentario===null) return;
+  comentario = comentario.trim();
+  if(!comentario){ alert('Debes escribir un comentario para marcarla como incompleta.'); return; }
+  r.incompleta = true; r.comentarioIncompleta = comentario; r.revisadoPor=usuarioActual; r.fechaRevision=new Date().toISOString();
+  dbGuardarReclamo(r);
+  crearNotificacion(r.usuarioSolicitante, 'incompleta', `Tu solicitud ${r.numero} (NV ${r.nv}) fue recibida pero está incompleta: ${comentario}`, r.id);
+  renderPendientes();
+}
+// El motivo de rechazo es obligatorio — si cancela o lo deja vacío, no hace nada.
 function rechazarReclamo(id){
   if(!esAdmin()) return;
   const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
-  const nota = prompt('Motivo del rechazo (opcional):','') || '';
+  let nota = prompt('Motivo de rechazo (obligatorio):', '');
+  if(nota===null) return;
+  nota = nota.trim();
+  if(!nota){ alert('Debes ingresar el motivo de rechazo.'); return; }
   r.estado='rechazado'; r.revisadoPor=usuarioActual; r.fechaRevision=new Date().toISOString(); r.notaRevision=nota;
-  dbGuardarReclamo(r); renderPendientes(); renderHistorial();
+  dbGuardarReclamo(r);
+  crearNotificacion(r.usuarioSolicitante, 'rechazada', `Tu solicitud ${r.numero} (NV ${r.nv}) fue rechazada. Motivo: ${nota}`, r.id);
+  renderPendientes(); renderHistorial();
 }
 function cambiarNotaRevision(id, valor){
   const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
