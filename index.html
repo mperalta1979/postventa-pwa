@@ -132,7 +132,7 @@
   </header>
 
   <nav id="tabs">
-    <button data-tab="dashboard">Dashboard</button>
+    <button id="navDashboard" data-tab="dashboard">Dashboard</button>
     <button data-tab="nueva" class="active">Nueva Solicitud</button>
     <button data-tab="pendientes">Solicitudes Pendientes</button>
     <button data-tab="revision">En Revisión</button>
@@ -142,6 +142,7 @@
   <nav id="subnavMaestro" style="display:none;background:var(--navy-dark);">
     <button data-tab="importar">Importar NV</button>
     <button data-tab="usuarios">Usuarios</button>
+    <button data-tab="roles">Roles</button>
     <button data-tab="motivos">Motivos Reclamo Post Venta</button>
     <button data-tab="tiposreclamo">Tipo de Reclamo</button>
     <button data-tab="config">Sincronización</button>
@@ -308,6 +309,23 @@
       </div>
     </section>
 
+    <!-- ROLES (admin) -->
+    <section id="tab-roles" class="tab">
+      <div class="panel">
+        <h2>Roles y facultades</h2>
+        <p class="hint">Cada rol es un conjunto de facultades — actívalas o desactívalas para definir qué puede hacer cada uno. Los roles "Administrador" y "Vendedor" son de base y no se pueden eliminar, pero sí puedes cambiarles las facultades.</p>
+        <div id="listaRoles"></div>
+      </div>
+      <div class="panel">
+        <h2>Crear rol nuevo</h2>
+        <div class="row">
+          <input type="text" id="nuevoRolNombre" placeholder="Nombre del rol (ej: Supervisor Zona Sur)...">
+          <button class="btn" id="btnCrearRol">Crear rol</button>
+        </div>
+        <div id="crearRolStatus" class="small-note"></div>
+      </div>
+    </section>
+
     <!-- MOTIVOS RECLAMO POST VENTA (admin) -->
     <section id="tab-motivos" class="tab">
       <div class="panel">
@@ -420,8 +438,38 @@ function comoFechaISO(v){
   if(isNaN(d.getTime())) return '';
   return d.toISOString().split('T')[0];
 }
+// ==================== Roles y facultades ====================
+// Lista fija de "facultades" disponibles — cada una corresponde a una acción
+// real que existe en la app. Los roles (admin, vendedor, y cualquiera que
+// cree el Admin) son simplemente combinaciones de estas facultades en on/off.
+const FACULTADES = [
+  { id:'verTodasNV', label:'Ver cualquier NV/Guía/Factura al buscar (no solo las del vendedor asociado)' },
+  { id:'verTodasSolicitudes', label:'Ver y gestionar todas las solicitudes (no solo las propias)' },
+  { id:'aprobarSolicitudes', label:'Marcar solicitudes como "Solicitud Recibida" o "Recibida/Incompleta"' },
+  { id:'rechazarSolicitudes', label:'Rechazar solicitudes' },
+  { id:'cerrarSolicitudes', label:'Cerrar solicitudes (ingresar N° Solicitud de Nota de Crédito)' },
+  { id:'editarRechazadas', label:'Editar y reabrir solicitudes rechazadas' },
+  { id:'eliminarSolicitudes', label:'Eliminar solicitudes' },
+  { id:'accesoMaestro', label:'Acceso al menú Maestro (Importar NV, Usuarios, Motivos, Tipos, Roles, Sincronización)' },
+  { id:'verDashboard', label:'Ver el Dashboard' }
+];
+function facultadesEnBlanco(){
+  const o = {}; FACULTADES.forEach(f => o[f.id] = false); return o;
+}
+// roles: { <clave>: { nombre, <facultad>: true|false, ... } } — 'admin' y
+// 'vendedor' vienen siempre (no se pueden borrar), el resto los crea el Admin.
+let roles = {
+  admin: { nombre:'Administrador', protegido:true, ...FACULTADES.reduce((o,f)=>(o[f.id]=true,o),{}) },
+  vendedor: { nombre:'Vendedor', protegido:true, ...facultadesEnBlanco() }
+};
+function tienePermiso(facultad){
+  const def = roles[rolActual];
+  return !!(def && def[facultad]);
+}
+// Se mantiene solo como acceso rápido al rol literal "admin" (para no romper
+// nombres antiguos) — para permisos de verdad, usar siempre tienePermiso().
 function esAdmin(){ return rolActual === 'admin'; }
-function puedeVerTodasNV(){ return esAdmin(); }
+function puedeVerTodasNV(){ return tienePermiso('verTodasNV'); }
 function miVendedor(){ return (cuentas[usuarioActual]||{}).vendedorAsociado || ''; }
 // Una cuenta puede tener más de un "Vendedor asociado" (ej: la misma persona
 // con dos códigos de vendedor distintos en el ERP), separados por coma.
@@ -429,9 +477,9 @@ function nvPerteneceAMiVendedor(nvVendedor){
   const propios = miVendedor().split(',').map(v=>v.trim().toLowerCase()).filter(Boolean);
   return propios.includes((nvVendedor||'').trim().toLowerCase());
 }
-// Un vendedor solo puede accionar reclamos que él mismo generó.
+// Un vendedor solo puede ver/accionar reclamos que él mismo generó.
 function puedeVerReclamo(r){
-  if(esAdmin()) return true;
+  if(tienePermiso('verTodasSolicitudes')) return true;
   return r.usuarioSolicitante === usuarioActual;
 }
 
@@ -439,7 +487,7 @@ function puedeVerReclamo(r){
 // Documento único con lo chico (cuentas, contador, motivos, tipos).
 async function dbGuardarConfig(){
   try{
-    await db.collection('postventa').doc('config').set({ cuentas, reclamoContador, maestroMotivosReclamo, maestroTiposReclamo });
+    await db.collection('postventa').doc('config').set({ cuentas, reclamoContador, maestroMotivosReclamo, maestroTiposReclamo, roles });
     return true;
   }catch(e){ console.warn('No se pudo guardar la configuración en Firestore:', e); return false; }
 }
@@ -513,6 +561,11 @@ async function dbCargarTodo(){
       if(data.reclamoContador) reclamoContador = data.reclamoContador;
       if(data.maestroMotivosReclamo) maestroMotivosReclamo = data.maestroMotivosReclamo;
       if(data.maestroTiposReclamo) maestroTiposReclamo = data.maestroTiposReclamo;
+      if(data.roles){
+        roles = { ...roles, ...data.roles };
+        if(roles.admin) roles.admin.protegido = true;
+        if(roles.vendedor) roles.vendedor.protegido = true;
+      }
     }
     guiasDatos = guiasSnap.docs.map(d => d.data());
     reclamosPostventa = reclamosSnap.docs.map(d => d.data());
@@ -575,7 +628,7 @@ async function migrarDesdeJsonbin(){
   }
   renderTodo();
 }
-document.getElementById('btnMigrarJsonbin').addEventListener('click', () => { if(esAdmin()) migrarDesdeJsonbin(); });
+document.getElementById('btnMigrarJsonbin').addEventListener('click', () => { if(tienePermiso('accesoMaestro')) migrarDesdeJsonbin(); });
 
 // ==================== Login ====================
 async function bootstrapAdmin(){
@@ -625,10 +678,11 @@ document.getElementById('btnCerrarSesion').addEventListener('click', () => {
 function entrarApp(){
   document.getElementById('loginScreen').style.display = 'none';
   document.getElementById('appWrap').style.display = 'block';
-  document.getElementById('usuarioActualLbl').textContent = `${usuarioActual} (${rolActual==='admin'?'Administrador':'Vendedor'})`;
-  document.querySelectorAll('.admin-only').forEach(el => el.style.display = esAdmin() ? '' : 'none');
-  document.getElementById('hintBuscarNV').textContent = esAdmin()
-    ? 'Busca por N° de Guía, N° de NV o N° de Factura — como Admin puedes ver cualquier documento.'
+  document.getElementById('usuarioActualLbl').textContent = `${usuarioActual} (${(roles[rolActual]&&roles[rolActual].nombre)||rolActual})`;
+  document.querySelectorAll('.admin-only').forEach(el => el.style.display = tienePermiso('accesoMaestro') ? '' : 'none');
+  document.getElementById('navDashboard').style.display = tienePermiso('verDashboard') ? '' : 'none';
+  document.getElementById('hintBuscarNV').textContent = tienePermiso('verTodasNV')
+    ? 'Busca por N° de Guía, N° de NV o N° de Factura — puedes ver cualquier documento.'
     : `Busca por N° de Guía, N° de NV o N° de Factura — solo puedes ver documentos de tu propio vendedor (${miVendedor()||'sin asignar'}).`;
   document.querySelector('#tabs button[data-tab="nueva"]').click();
   renderTodo();
@@ -638,6 +692,7 @@ function renderTodo(){
   renderRevision();
   renderHistorial();
   renderUsuarios();
+  renderRoles();
   renderStatsImportNV();
   renderSyncStatus();
   renderMotivosReclamo();
@@ -647,7 +702,7 @@ function renderTodo(){
 // ==================== Notificaciones ====================
 const NOTIF_ICONO = { nueva_solicitud:'🆕', recibida:'📥', incompleta:'⚠️', rechazada:'❌' };
 function notificacionesDe(usuario){
-  return notificaciones.filter(n => n.para===usuario || (n.para==='ADMIN' && esAdmin()));
+  return notificaciones.filter(n => n.para===usuario || (n.para==='ADMIN' && tienePermiso('verTodasSolicitudes')));
 }
 function renderNotifBadge(){
   if(!usuarioActual) return;
@@ -698,12 +753,13 @@ document.querySelectorAll('#tabs button[data-tab], #subnavMaestro button[data-ta
     document.getElementById('tab-'+btn.dataset.tab).style.display='block';
     if(btn.dataset.tab==='motivos') renderMotivosReclamo();
     if(btn.dataset.tab==='tiposreclamo') renderTiposReclamo();
+    if(btn.dataset.tab==='roles') renderRoles();
     if(btn.dataset.tab==='dashboard') renderDashboard();
     if(SECCIONES_MAESTRO.includes(btn.dataset.tab)) document.getElementById('navMaestro').classList.add('active');
     else document.getElementById('navMaestro').classList.remove('active');
   });
 });
-const SECCIONES_MAESTRO = ['importar','usuarios','motivos','tiposreclamo','config'];
+const SECCIONES_MAESTRO = ['importar','usuarios','roles','motivos','tiposreclamo','config'];
 document.getElementById('navMaestro').addEventListener('click', () => {
   const sub = document.getElementById('subnavMaestro');
   const abrir = sub.style.display === 'none';
@@ -722,7 +778,7 @@ function buscarDocumentoNV(){
   const cont = document.getElementById('resultadoBusquedaNV');
   if(!numero){ cont.innerHTML = '<p class="hint">Ingresa un número.</p>'; return; }
   if(!guiasDatos.length){
-    cont.innerHTML = `<p class="hint">Todavía no hay guías de despacho cargadas. ${esAdmin() ? 'Ve a Maestro \u2192 Importar NV para cargarlas.' : 'Pídele al Admin que cargue el archivo de Guías de Despacho.'}</p>`;
+    cont.innerHTML = `<p class="hint">Todavía no hay guías de despacho cargadas. ${tienePermiso('accesoMaestro') ? 'Ve a Maestro \u2192 Importar NV para cargarlas.' : 'Pídele al Admin que cargue el archivo de Guías de Despacho.'}</p>`;
     return;
   }
   let candidatas = [];
@@ -730,7 +786,7 @@ function buscarDocumentoNV(){
   else if(tipo === 'factura') candidatas = guiasDatos.filter(g => String(g.factura) === numero);
   else candidatas = guiasDatos.filter(g => String(g.nv) === numero);
 
-  if(!esAdmin()) candidatas = candidatas.filter(g => nvPerteneceAMiVendedor(g.vendedor));
+  if(!tienePermiso('verTodasNV')) candidatas = candidatas.filter(g => nvPerteneceAMiVendedor(g.vendedor));
 
   if(!candidatas.length){
     const etiqueta = tipo==='guia' ? 'N° de Guía' : (tipo==='factura' ? 'N° de Factura' : 'N° de NV');
@@ -961,12 +1017,12 @@ function renderTarjetaReclamo(r, contexto){
   const diasPendiente = contexto==='pendiente' ? Math.floor((Date.now()-new Date(r.fecha).getTime())/86400000) : null;
   const badgeDias = diasPendiente!==null ? `<span class="pill ${diasPendiente>=3?'alert':(diasPendiente>=1?'warn':'ok')}" style="margin-left:6px;">${diasPendiente===0?'Hoy':diasPendiente+' día'+(diasPendiente===1?'':'s')+' sin responder'}</span>` : '';
   let acciones = '';
-  if(contexto==='pendiente' && esAdmin()){
-    acciones = `<button class="btn" onclick="aprobarReclamo('${r.id}')">Solicitud Recibida</button>
-      <button class="btn secondary" onclick="marcarIncompleta('${r.id}')">Recibida/Incompleta</button>
-      <button class="btn danger" onclick="rechazarReclamo('${r.id}')">Rechazar</button>
-      <button class="btn danger" onclick="eliminarReclamo('${r.id}')">Eliminar</button>`;
-  } else if(contexto==='revision' && esAdmin()){
+  if(contexto==='pendiente'){
+    if(tienePermiso('aprobarSolicitudes')) acciones += `<button class="btn" onclick="aprobarReclamo('${r.id}')">Solicitud Recibida</button>
+      <button class="btn secondary" onclick="marcarIncompleta('${r.id}')">Recibida/Incompleta</button>`;
+    if(tienePermiso('rechazarSolicitudes')) acciones += `<button class="btn danger" onclick="rechazarReclamo('${r.id}')">Rechazar</button>`;
+    if(tienePermiso('eliminarSolicitudes')) acciones += `<button class="btn danger" onclick="eliminarReclamo('${r.id}')">Eliminar</button>`;
+  } else if(contexto==='revision' && (tienePermiso('cerrarSolicitudes') || tienePermiso('eliminarSolicitudes'))){
     acciones = `
       <div style="margin-top:8px;">
         <label class="hint" style="display:block;margin-bottom:3px;">Conclusiones / notas de la revisión</label>
@@ -977,8 +1033,8 @@ function renderTarjetaReclamo(r, contexto){
           <label class="hint" style="display:block;margin-bottom:3px;">N° de Solicitud de Nota de Crédito</label>
           <input type="text" id="ncInput_${r.id}" value="${r.numeroNotaCredito||''}" style="width:160px;">
         </div>
-        <button class="btn" onclick="cerrarReclamo('${r.id}')">Cerrar solicitud</button>
-        <button class="btn danger" onclick="eliminarReclamo('${r.id}')">Eliminar</button>
+        ${tienePermiso('cerrarSolicitudes') ? `<button class="btn" onclick="cerrarReclamo('${r.id}')">Cerrar solicitud</button>` : ''}
+        ${tienePermiso('eliminarSolicitudes') ? `<button class="btn danger" onclick="eliminarReclamo('${r.id}')">Eliminar</button>` : ''}
       </div>`;
   }
   return `<div id="tarjeta_${r.id}" style="border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:12px;">
@@ -1044,14 +1100,14 @@ function renderFormularioEdicionReclamo(r){
   </td></tr>`;
 }
 function abrirEdicionReclamo(id){
-  if(!esAdmin()) return;
+  if(!tienePermiso('editarRechazadas')) return;
   const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
   const el = document.getElementById(`filaHist_${id}`); if(!el) return;
   el.outerHTML = renderFormularioEdicionReclamo(r);
 }
 function cancelarEdicionReclamo(id){ renderHistorial(); }
 function guardarEdicionReclamo(id){
-  if(!esAdmin()) return;
+  if(!tienePermiso('editarRechazadas')) return;
   const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
   const obs = document.getElementById(`editObs_${id}`).value.trim();
   if(!obs){ alert('Las observaciones son obligatorias.'); return; }
@@ -1114,15 +1170,15 @@ function renderHistorial(){
     <td>${r.estado==='rechazado' ? (r.notaRevision||'-') : '-'}</td>
     <td>${r.numeroNotaCredito||'-'}</td>
     <td>
-      ${esAdmin() && r.estado==='rechazado' ? `<button class="btn secondary" style="padding:4px 8px;font-size:.72rem;" onclick="abrirEdicionReclamo('${r.id}')">Editar</button>` : ''}
-      ${esAdmin() ? `<button class="btn danger" style="padding:4px 8px;font-size:.72rem;" onclick="eliminarReclamo('${r.id}')">Eliminar</button>` : ''}
+      ${tienePermiso('editarRechazadas') && r.estado==='rechazado' ? `<button class="btn secondary" style="padding:4px 8px;font-size:.72rem;" onclick="abrirEdicionReclamo('${r.id}')">Editar</button>` : ''}
+      ${tienePermiso('eliminarSolicitudes') ? `<button class="btn danger" style="padding:4px 8px;font-size:.72rem;" onclick="eliminarReclamo('${r.id}')">Eliminar</button>` : ''}
     </td>
   </tr>`).join('');
 }
 document.getElementById('filtroHistNV').addEventListener('input', renderHistorial);
 document.getElementById('filtroHistEstado').addEventListener('change', renderHistorial);
 function aprobarReclamo(id){
-  if(!esAdmin()) return;
+  if(!tienePermiso('aprobarSolicitudes')) return;
   const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
   r.estado='aprobado'; r.revisadoPor=usuarioActual; r.fechaRevision=new Date().toISOString();
   dbGuardarReclamo(r);
@@ -1131,7 +1187,7 @@ function aprobarReclamo(id){
 }
 // El comentario es obligatorio — si cancela o lo deja vacío, no hace nada.
 function marcarIncompleta(id){
-  if(!esAdmin()) return;
+  if(!tienePermiso('aprobarSolicitudes')) return;
   const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
   let comentario = prompt('¿Qué falta o qué está incompleto en esta solicitud? (obligatorio)', '');
   if(comentario===null) return;
@@ -1144,7 +1200,7 @@ function marcarIncompleta(id){
 }
 // El motivo de rechazo es obligatorio — si cancela o lo deja vacío, no hace nada.
 function rechazarReclamo(id){
-  if(!esAdmin()) return;
+  if(!tienePermiso('rechazarSolicitudes')) return;
   const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
   let nota = prompt('Motivo de rechazo (obligatorio):', '');
   if(nota===null) return;
@@ -1160,7 +1216,7 @@ function cambiarNotaRevision(id, valor){
   r.notaRevision = valor; dbGuardarReclamo(r);
 }
 function cerrarReclamo(id){
-  if(!esAdmin()) return;
+  if(!tienePermiso('cerrarSolicitudes')) return;
   const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
   const nc = document.getElementById(`ncInput_${id}`).value.trim();
   if(!nc){ alert('Ingresa el N° de Solicitud de Nota de Crédito para poder cerrar.'); return; }
@@ -1170,7 +1226,7 @@ function cerrarReclamo(id){
 // Elimina una solicitud por completo (para pruebas o errores de un usuario)
 // — solo el Admin puede hacerlo, sin importar el estado en que esté.
 function eliminarReclamo(id){
-  if(!esAdmin()) return;
+  if(!tienePermiso('eliminarSolicitudes')) return;
   const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
   if(!confirm(`¿Eliminar por completo la solicitud ${r.numero} (NV ${r.nv})? Esta acción no se puede deshacer.`)) return;
   const idx = reclamosPostventa.findIndex(x=>x.id===id);
@@ -1280,7 +1336,7 @@ function dashRenderEvolucionMensual(visibles){
 function renderDashboard(){
   const visibles = reclamosPostventa.filter(puedeVerReclamo);
   const activos = visibles.filter(r => r.estado==='pendiente' || r.estado==='aprobado');
-  document.getElementById('dashScopeHint').textContent = esAdmin()
+  document.getElementById('dashScopeHint').textContent = tienePermiso('verTodasSolicitudes')
     ? 'Datos de todos los vendedores.'
     : 'Mostrando solo tus propias solicitudes.';
 
@@ -1381,25 +1437,121 @@ function renderStatsImportNV(){
 }
 
 // ==================== Usuarios (admin) ====================
+// ==================== Roles (admin) ====================
+function renderRoles(){
+  const cont = document.getElementById('listaRoles');
+  if(!cont) return;
+  cont.innerHTML = Object.keys(roles).sort().map(clave => {
+    const r = roles[clave];
+    const enUso = Object.values(cuentas).filter(c=>c.rol===clave).length;
+    return `<div style="border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:12px;">
+      <div class="row" style="justify-content:space-between;align-items:center;flex-wrap:wrap;">
+        <strong style="color:var(--navy);">${r.nombre}</strong>
+        <span class="small-note">${enUso} usuario${enUso===1?'':'s'} con este rol</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:6px 16px;margin-top:10px;">
+        ${FACULTADES.map(f => `
+          <label style="display:flex;align-items:center;gap:6px;font-size:.82rem;">
+            <input type="checkbox" ${r[f.id]?'checked':''} onchange="cambiarFacultadRol('${clave}','${f.id}',this.checked)">
+            ${f.label}
+          </label>`).join('')}
+      </div>
+      ${!r.protegido ? `<div style="margin-top:10px;"><button class="btn danger" style="padding:4px 9px;font-size:.72rem;" onclick="eliminarRol('${clave}')">Eliminar rol</button></div>` : `<div class="small-note" style="margin-top:8px;">Rol de base — no se puede eliminar.</div>`}
+    </div>`;
+  }).join('');
+}
+function cambiarFacultadRol(clave, facultad, valor){
+  if(!tienePermiso('accesoMaestro')){ renderRoles(); return; }
+  if(!roles[clave]) return;
+  // No dejar que se quite accesoMaestro al último rol/usuario que lo tiene.
+  if(facultad==='accesoMaestro' && !valor && roles[clave].accesoMaestro){
+    const otrosConAcceso = Object.keys(roles).some(k => k!==clave && roles[k].accesoMaestro);
+    const usanEsteRol = Object.values(cuentas).some(c=>c.rol===clave);
+    if(usanEsteRol && !otrosConAcceso){
+      alert('No puedes quitarle el acceso al Maestro a este rol — ningún otro rol lo tiene y hay usuarios asignados a este.');
+      renderRoles();
+      return;
+    }
+  }
+  roles[clave][facultad] = valor;
+  dbGuardarConfig();
+  if(clave===rolActual) entrarApp(); // si te cambiaste facultades a ti mismo, refresca lo que ves
+}
+document.getElementById('btnCrearRol').addEventListener('click', () => {
+  if(!tienePermiso('accesoMaestro')) return;
+  const status = document.getElementById('crearRolStatus');
+  const nombre = document.getElementById('nuevoRolNombre').value.trim();
+  if(!nombre){ status.textContent = 'Ingresa un nombre para el rol.'; return; }
+  const clave = (nombre.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'')) || `rol_${Date.now()}`;
+  if(roles[clave]){ status.textContent = 'Ya existe un rol con ese nombre.'; return; }
+  roles[clave] = { nombre, protegido:false, ...facultadesEnBlanco() };
+  dbGuardarConfig();
+  document.getElementById('nuevoRolNombre').value = '';
+  status.textContent = `Rol "${nombre}" creado — actívale las facultades que necesite.`;
+  renderRoles();
+  renderUsuarios();
+});
+function eliminarRol(clave){
+  if(!tienePermiso('accesoMaestro')) return;
+  if(!roles[clave] || roles[clave].protegido) return;
+  const enUso = Object.values(cuentas).filter(c=>c.rol===clave).length;
+  if(enUso>0){ alert(`No puedes eliminar este rol — hay ${enUso} usuario(s) que lo tienen asignado. Cámbiales el rol primero desde Usuarios.`); return; }
+  if(!confirm(`¿Eliminar el rol "${roles[clave].nombre}"?`)) return;
+  delete roles[clave];
+  dbGuardarConfig();
+  renderRoles();
+  renderUsuarios();
+}
 function renderUsuarios(){
   const tbody = document.getElementById('tbodyUsuarios');
   if(!tbody) return;
+  // Refresca el selector de roles disponibles para crear usuarios nuevos —
+  // incluye cualquier rol que el Admin haya creado, no solo los dos de base.
+  const selNuevo = document.getElementById('nuevoUsuarioRol');
+  if(selNuevo) selNuevo.innerHTML = Object.keys(roles).sort().map(k => `<option value="${k}">${roles[k].nombre}</option>`).join('');
   tbody.innerHTML = Object.keys(cuentas).sort().map(u => {
     const c = cuentas[u];
+    const necesitaVendedor = !(roles[c.rol] && roles[c.rol].verTodasNV);
     return `<tr>
       <td>${u}</td>
-      <td>${c.rol==='admin'?'Administrador':'Vendedor'}</td>
+      <td>
+        <select onchange="cambiarRolUsuario('${u}', this.value)" style="font-size:.8rem;">
+          ${Object.keys(roles).sort().map(k => `<option value="${k}" ${k===c.rol?'selected':''}>${roles[k].nombre}</option>`).join('')}
+        </select>
+      </td>
       <td>${c.vendedorAsociado||'-'}</td>
       <td>
         <button class="btn secondary" style="padding:4px 9px;font-size:.72rem;" onclick="abrirCambiarClave('${u}')">Cambiar clave</button>
-        ${c.rol==='vendedor' ? `<button class="btn secondary" style="padding:4px 9px;font-size:.72rem;" onclick="abrirEditarVendedorAsociado('${u}')">Editar vendedor</button>` : ''}
+        ${necesitaVendedor ? `<button class="btn secondary" style="padding:4px 9px;font-size:.72rem;" onclick="abrirEditarVendedorAsociado('${u}')">Editar vendedor</button>` : ''}
         ${u!==usuarioActual ? `<button class="btn danger" style="padding:4px 9px;font-size:.72rem;" onclick="eliminarUsuario('${u}')">Eliminar</button>` : ''}
       </td>
     </tr>`;
   }).join('');
 }
+// Cuántas cuentas tienen hoy acceso al Maestro — se usa para no dejar la app
+// sin nadie que pueda administrarla.
+function contarConAccesoMaestro(excluirUsuario){
+  return Object.entries(cuentas).filter(([nombre,c]) => nombre!==excluirUsuario && roles[c.rol] && roles[c.rol].accesoMaestro).length;
+}
+function cambiarRolUsuario(u, nuevoRol){
+  if(!tienePermiso('accesoMaestro')) { renderUsuarios(); return; }
+  if(!roles[nuevoRol]) { renderUsuarios(); return; }
+  const perderiaAcceso = !roles[nuevoRol].accesoMaestro;
+  if(perderiaAcceso && contarConAccesoMaestro(u)===0){
+    alert('Debe quedar al menos un usuario con acceso al Maestro — no puedes quitarle el rol a este usuario.');
+    renderUsuarios();
+    return;
+  }
+  if(u===usuarioActual && perderiaAcceso && !confirm('Te vas a quitar a ti mismo el acceso al Maestro con este cambio. ¿Continuar?')){
+    renderUsuarios();
+    return;
+  }
+  cuentas[u].rol = nuevoRol;
+  dbGuardarConfig();
+  renderUsuarios();
+}
 function abrirEditarVendedorAsociado(u){
-  if(!esAdmin()) return;
+  if(!tienePermiso('accesoMaestro')) return;
   const actual = cuentas[u].vendedorAsociado || '';
   const nuevo = prompt(`Vendedor(es) asociado(s) para "${u}" (sepáralos con coma si son varios):`, actual);
   if(nuevo === null) return; // canceló
@@ -1408,7 +1560,7 @@ function abrirEditarVendedorAsociado(u){
   renderUsuarios();
 }
 document.getElementById('btnCrearUsuario').addEventListener('click', async () => {
-  if(!esAdmin()) return;
+  if(!tienePermiso('accesoMaestro')) return;
   const nombre = document.getElementById('nuevoUsuarioNombre').value.trim();
   const clave = document.getElementById('nuevoUsuarioClave').value;
   const rol = document.getElementById('nuevoUsuarioRol').value;
@@ -1416,8 +1568,9 @@ document.getElementById('btnCrearUsuario').addEventListener('click', async () =>
   const status = document.getElementById('crearUsuarioStatus');
   if(!nombre || !clave){ status.textContent = 'Usuario y clave son obligatorios.'; return; }
   if(cuentas[nombre]){ status.textContent = 'Ya existe un usuario con ese nombre.'; return; }
-  if(rol==='vendedor' && !vendedor){ status.textContent = 'Para un vendedor, indica el "Vendedor asociado" (tal como aparece en las NV).'; return; }
-  cuentas[nombre] = { passwordHash: await hashPassword(clave), rol, vendedorAsociado: rol==='vendedor'?vendedor:'' };
+  if(!roles[rol]){ status.textContent = 'Elige un rol válido.'; return; }
+  if(!roles[rol].verTodasNV && !vendedor){ status.textContent = 'Para este rol, indica el "Vendedor asociado" (tal como aparece en las NV).'; return; }
+  cuentas[nombre] = { passwordHash: await hashPassword(clave), rol, vendedorAsociado: !roles[rol].verTodasNV?vendedor:'' };
   dbGuardarConfig();
   document.getElementById('nuevoUsuarioNombre').value = '';
   document.getElementById('nuevoUsuarioClave').value = '';
@@ -1426,7 +1579,7 @@ document.getElementById('btnCrearUsuario').addEventListener('click', async () =>
   renderUsuarios();
 });
 async function abrirCambiarClave(u){
-  if(!esAdmin()) return;
+  if(!tienePermiso('accesoMaestro')) return;
   const nueva = prompt(`Nueva clave para "${u}":`);
   if(!nueva) return;
   cuentas[u].passwordHash = await hashPassword(nueva);
@@ -1434,10 +1587,9 @@ async function abrirCambiarClave(u){
   alert('Clave actualizada.');
 }
 function eliminarUsuario(u){
-  if(!esAdmin()) return;
+  if(!tienePermiso('accesoMaestro')) return;
   if(u === usuarioActual){ alert('No puedes eliminar tu propio usuario.'); return; }
-  const admins = Object.values(cuentas).filter(c=>c.rol==='admin').length;
-  if(cuentas[u].rol==='admin' && admins<=1){ alert('Debe quedar al menos un Administrador.'); return; }
+  if(roles[cuentas[u].rol] && roles[cuentas[u].rol].accesoMaestro && contarConAccesoMaestro(u)===0){ alert('Debe quedar al menos un usuario con acceso al Maestro.'); return; }
   if(!confirm(`¿Eliminar el usuario "${u}"?`)) return;
   delete cuentas[u];
   dbGuardarConfig();
@@ -1455,14 +1607,14 @@ function renderMotivosReclamo(){
     </tr>`).join('');
 }
 function editarMotivoReclamo(id, valor){
-  if(!esAdmin()) return;
+  if(!tienePermiso('accesoMaestro')) return;
   const m = maestroMotivosReclamo.find(x=>x.id===id);
   if(!m) return;
   m.motivo = valor.trim();
   dbGuardarConfig();
 }
 function eliminarMotivoReclamo(id){
-  if(!esAdmin()) return;
+  if(!tienePermiso('accesoMaestro')) return;
   if(!confirm('¿Eliminar este motivo?')) return;
   const idx = maestroMotivosReclamo.findIndex(x=>x.id===id);
   if(idx>=0) maestroMotivosReclamo.splice(idx,1);
@@ -1470,7 +1622,7 @@ function eliminarMotivoReclamo(id){
   renderMotivosReclamo();
 }
 document.getElementById('btnAgregarMotivo').addEventListener('click', () => {
-  if(!esAdmin()) return;
+  if(!tienePermiso('accesoMaestro')) return;
   const texto = document.getElementById('nuevoMotivoTexto').value.trim();
   if(!texto) return;
   maestroMotivosReclamo.push({ id:`m_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, motivo:texto });
@@ -1496,14 +1648,14 @@ function renderTiposReclamo(){
     </tr>`).join('');
 }
 function editarTipoReclamo(id, valor){
-  if(!esAdmin()) return;
+  if(!tienePermiso('accesoMaestro')) return;
   const t = maestroTiposReclamo.find(x=>x.id===id);
   if(!t) return;
   t.tipo = valor.trim();
   dbGuardarConfig();
 }
 function eliminarTipoReclamo(id){
-  if(!esAdmin()) return;
+  if(!tienePermiso('accesoMaestro')) return;
   if(!confirm('¿Eliminar este tipo de reclamo?')) return;
   const idx = maestroTiposReclamo.findIndex(x=>x.id===id);
   if(idx>=0) maestroTiposReclamo.splice(idx,1);
@@ -1511,7 +1663,7 @@ function eliminarTipoReclamo(id){
   renderTiposReclamo();
 }
 document.getElementById('btnAgregarTipoReclamo').addEventListener('click', () => {
-  if(!esAdmin()) return;
+  if(!tienePermiso('accesoMaestro')) return;
   const texto = document.getElementById('nuevoTipoReclamoTexto').value.trim();
   if(!texto) return;
   maestroTiposReclamo.push({ id:`t_${Date.now()}_${Math.random().toString(36).slice(2,6)}`, tipo:texto });
@@ -1532,7 +1684,7 @@ function renderSyncStatus(){
   const panelMigracion = document.getElementById('panelMigracionJsonbin');
   if(!box) return;
   box.innerHTML = `<span class="pill ok">✓ Conectado a Firestore</span> — proyecto <code>${firebaseConfig.projectId}</code>.`;
-  if(panelMigracion) panelMigracion.style.display = esAdmin() ? 'block' : 'none';
+  if(panelMigracion) panelMigracion.style.display = tienePermiso('accesoMaestro') ? 'block' : 'none';
 }
 
 // ==================== Init ====================
