@@ -2198,7 +2198,7 @@ function renderRoles(){
     </div>`;
   }).join('');
 }
-function cambiarFacultadRol(clave, facultad, valor){
+async function cambiarFacultadRol(clave, facultad, valor){
   if(!tienePermiso('accesoMaestro')){ renderRoles(); return; }
   if(!roles[clave]) return;
   // No dejar que se quite accesoMaestro al último rol/usuario que lo tiene.
@@ -2211,32 +2211,51 @@ function cambiarFacultadRol(clave, facultad, valor){
       return;
     }
   }
+  const anterior = roles[clave][facultad];
   roles[clave][facultad] = valor;
-  dbActualizarCampoConfig(`roles.${clave}.${facultad}`, valor);
+  const ok = await dbActualizarCampoConfig(`roles.${clave}.${facultad}`, valor);
+  if(!ok){
+    roles[clave][facultad] = anterior; // revierte el cambio local si no se pudo guardar
+    alert('No se pudo guardar el cambio en Firebase — revisa tu conexión (o las reglas de seguridad de Firestore) e intenta de nuevo.');
+    renderRoles();
+    return;
+  }
   if(clave===rolActual) entrarApp(); // si te cambiaste facultades a ti mismo, refresca lo que ves
 }
-document.getElementById('btnCrearRol').addEventListener('click', () => {
+document.getElementById('btnCrearRol').addEventListener('click', async () => {
   if(!tienePermiso('accesoMaestro')) return;
   const status = document.getElementById('crearRolStatus');
   const nombre = document.getElementById('nuevoRolNombre').value.trim();
   if(!nombre){ status.textContent = 'Ingresa un nombre para el rol.'; return; }
   const clave = (nombre.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'')) || `rol_${Date.now()}`;
   if(roles[clave]){ status.textContent = 'Ya existe un rol con ese nombre.'; return; }
+  status.textContent = 'Guardando...';
   roles[clave] = { nombre, protegido:false, ...facultadesEnBlanco() };
-  dbActualizarCampoConfig(`roles.${clave}`, roles[clave]);
+  const ok = await dbActualizarCampoConfig(`roles.${clave}`, roles[clave]);
+  if(!ok){
+    delete roles[clave]; // no quedó guardado, no lo dejamos tampoco en la lista local
+    status.textContent = '⚠️ No se pudo guardar el rol en Firebase — revisa tu conexión (o las reglas de seguridad de Firestore) e intenta de nuevo.';
+    renderRoles();
+    return;
+  }
   document.getElementById('nuevoRolNombre').value = '';
-  status.textContent = `Rol "${nombre}" creado — actívale las facultades que necesite.`;
+  status.textContent = `Rol "${nombre}" creado y guardado — actívale las facultades que necesite.`;
   renderRoles();
   renderUsuarios();
 });
-function eliminarRol(clave){
+async function eliminarRol(clave){
   if(!tienePermiso('accesoMaestro')) return;
   if(!roles[clave] || roles[clave].protegido) return;
   const enUso = Object.values(cuentas).filter(c=>c.rol===clave).length;
   if(enUso>0){ alert(`No puedes eliminar este rol — hay ${enUso} usuario(s) que lo tienen asignado. Cámbiales el rol primero desde Usuarios.`); return; }
   if(!confirm(`¿Eliminar el rol "${roles[clave].nombre}"?`)) return;
+  const respaldo = roles[clave];
   delete roles[clave];
-  dbEliminarCampoConfig(`roles.${clave}`);
+  const ok = await dbEliminarCampoConfig(`roles.${clave}`);
+  if(!ok){
+    roles[clave] = respaldo; // no se pudo borrar en Firebase, lo dejamos como estaba
+    alert('No se pudo eliminar el rol en Firebase — revisa tu conexión (o las reglas de seguridad de Firestore) e intenta de nuevo.');
+  }
   renderRoles();
   renderUsuarios();
 }
