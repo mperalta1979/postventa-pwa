@@ -700,7 +700,13 @@ async function dbCargarTodo(){
     return true;
   }catch(e){ console.warn('No se pudo cargar datos de Firestore:', e); return false; }
 }
-setInterval(async () => { if(usuarioActual){ await dbCargarTodo(); renderTodo(); renderNotifBadge(); } }, 30000);
+// Mientras el usuario tiene abierto un formulario en línea (Completar
+// solicitud, Editar rechazada), el refresco automático de abajo NO debe
+// reconstruir las listas — si no, a mitad de camino le borra lo que estaba
+// escribiendo. Se sigue trayendo la info fresca igual, solo se posterga
+// el repintado hasta que cierre el formulario.
+let edicionInlineAbierta = false;
+setInterval(async () => { if(usuarioActual){ await dbCargarTodo(); if(!edicionInlineAbierta) renderTodo(); renderNotifBadge(); } }, 30000);
 
 // ==================== Migración única desde jsonbin ====================
 // Trae lo que estaba guardado en el sistema anterior y lo sube a Firestore
@@ -1266,8 +1272,9 @@ function abrirEdicionReclamo(id){
   const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
   const el = document.getElementById(`filaHist_${id}`); if(!el) return;
   el.outerHTML = renderFormularioEdicionReclamo(r);
+  edicionInlineAbierta = true;
 }
-function cancelarEdicionReclamo(id){ renderHistorial(); }
+function cancelarEdicionReclamo(id){ edicionInlineAbierta = false; renderHistorial(); }
 function guardarEdicionReclamo(id){
   if(!tienePermiso('editarRechazadas')) return;
   const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
@@ -1288,6 +1295,7 @@ function guardarEdicionReclamo(id){
   registrarEvento(r, 'reabierta', obs);
   dbGuardarReclamo(r);
   crearNotificacion(r.usuarioSolicitante, 'recibida', `Tu solicitud ${r.numero} fue corregida por ${usuarioActual} y vuelve a estar en revisión.`, r.id);
+  edicionInlineAbierta = false;
   renderHistorial(); renderPendientes();
 }
 
@@ -1408,8 +1416,9 @@ function abrirCompletarIncompleta(id){
   if(r.usuarioSolicitante!==usuarioActual) return;
   const el = document.getElementById(`tarjeta_${id}`); if(!el) return;
   el.outerHTML = renderFormularioCompletarIncompleta(r);
+  edicionInlineAbierta = true;
 }
-function cancelarCompletarIncompleta(){ renderPendientes(); }
+function cancelarCompletarIncompleta(){ edicionInlineAbierta = false; renderPendientes(); }
 async function guardarCompletarIncompleta(id){
   const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
   if(r.usuarioSolicitante!==usuarioActual) return;
@@ -1426,6 +1435,7 @@ async function guardarCompletarIncompleta(id){
   registrarEvento(r, 'completada', agregado);
   await dbGuardarReclamo(r);
   crearNotificacion('ADMIN', 'completada', `${usuarioActual} completó la solicitud ${r.numero} (NV ${r.nv}) — lo que faltaba: "${comentarioPrevio}". Ya se puede revisar de nuevo.`, r.id);
+  edicionInlineAbierta = false;
   renderPendientes();
 }
 // El motivo de rechazo es obligatorio — si cancela o lo deja vacío, no hace nada.
