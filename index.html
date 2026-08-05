@@ -1037,8 +1037,8 @@ function mostrarFormularioGuia(guia){
     </div>
     <div class="row" style="margin-top:10px;">
       <div>
-        <label class="hint" style="display:block;margin-bottom:4px;">Adjuntar foto o archivo (imagen, PDF o Excel) — opcional</label>
-        <input type="file" id="archivoReclamo" accept="image/*,.pdf,.xls,.xlsx,.csv">
+        <label class="hint" style="display:block;margin-bottom:4px;">Adjuntar fotos o archivos (imagen, PDF o Excel) — hasta 3, opcional</label>
+        <input type="file" id="archivoReclamo" accept="image/*,.pdf,.xls,.xlsx,.csv" multiple>
       </div>
     </div>
     <div class="row" style="margin-top:10px;">
@@ -1055,6 +1055,7 @@ function mostrarFormularioGuia(guia){
 // Firestore no puede pesar más de ~1MB en total).
 const LIMITE_ADJUNTO_BYTES = 4*1024*1024;
 const LIMITE_ADJUNTO_SIN_CLOUDINARY = 500*1024;
+const MAX_ADJUNTOS_POR_SOLICITUD = 3;
 function leerArchivoAdjunto(inputEl){
   return new Promise((resolve, reject) => {
     const file = inputEl.files && inputEl.files[0];
@@ -1070,6 +1071,35 @@ function leerArchivoAdjunto(inputEl){
     reader.onload = () => resolve({ nombre:file.name, tipo:file.type, dataUrl:reader.result });
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
+  });
+}
+// Igual que leerArchivoAdjunto pero para varios archivos a la vez (el input
+// tiene el atributo "multiple"). maxCantidad es cuántos caben todavía —
+// en Nueva Solicitud son los 3 completos; al Completar una incompleta, son
+// los que queden libres según lo que ya tenga adjunto.
+function leerArchivosAdjuntos(inputEl, maxCantidad){
+  return new Promise((resolve, reject) => {
+    const files = inputEl.files ? Array.from(inputEl.files) : [];
+    if(!files.length){ resolve([]); return; }
+    if(files.length > maxCantidad){
+      alert(`Puedes adjuntar hasta ${maxCantidad} archivo${maxCantidad===1?'':'s'} más en esta solicitud — seleccionaste ${files.length}.`);
+      reject(new Error('demasiados_archivos'));
+      return;
+    }
+    const hayCloudinary = !!(CLOUDINARY_CLOUD_NAME && CLOUDINARY_UPLOAD_PRESET);
+    const limite = hayCloudinary ? LIMITE_ADJUNTO_BYTES : LIMITE_ADJUNTO_SIN_CLOUDINARY;
+    const pesados = files.filter(f => f.size > limite);
+    if(pesados.length){
+      alert(`${pesados.map(f=>f.name).join(', ')} pesa(n) más de ${(limite/1024/1024).toFixed(2)}MB.`);
+      reject(new Error('archivo_muy_pesado'));
+      return;
+    }
+    Promise.all(files.map(file => new Promise((res, rej) => {
+      const reader = new FileReader();
+      reader.onload = () => res({ nombre:file.name, tipo:file.type, dataUrl:reader.result });
+      reader.onerror = () => rej(reader.error);
+      reader.readAsDataURL(file);
+    }))).then(resolve).catch(reject);
   });
 }
 // Si Cloudinary está configurado, sube el archivo ahí y se queda solo con la
@@ -1090,6 +1120,13 @@ async function subirAdjuntoSiCorresponde(archivo){
     console.warn('No se pudo subir el adjunto a Cloudinary, se guarda local:', e);
     return archivo;
   }
+}
+async function subirAdjuntosSiCorresponde(archivos){
+  const resultados = [];
+  for(const archivo of (archivos||[])){
+    resultados.push(await subirAdjuntoSiCorresponde(archivo));
+  }
+  return resultados;
 }
 async function enviarSolicitud(){
   const ctx = window.__busquedaNVActual;
@@ -1134,9 +1171,9 @@ async function enviarSolicitud(){
     if(!confirm('Numero de NV, Guia o Factura ya cuenta con solicitud realizada ¿Desea continuar?')) return;
     posibleDuplicado = true;
   }
-  let archivo;
-  try{ archivo = await leerArchivoAdjunto(document.getElementById('archivoReclamo')); }catch(e){ return; }
-  if(archivo){ status.textContent = 'Subiendo adjunto...'; archivo = await subirAdjuntoSiCorresponde(archivo); }
+  let archivos;
+  try{ archivos = await leerArchivosAdjuntos(document.getElementById('archivoReclamo'), MAX_ADJUNTOS_POR_SOLICITUD); }catch(e){ return; }
+  if(archivos.length){ status.textContent = 'Subiendo adjuntos...'; archivos = await subirAdjuntosSiCorresponde(archivos); }
   const items = idxs.map(idx => {
     const l = ctx.data.lineas[idx];
     const cantInput = document.querySelector(`.cantidadReclamadaNV[data-idx="${idx}"]`);
@@ -1150,7 +1187,7 @@ async function enviarSolicitud(){
     usuarioSolicitante: usuarioActual,
     nv: ctx.nv, cliente: ctx.data.cliente||'', vendedor: ctx.data.vendedor||'',
     guiaFolio: ctx.guia.folio||'', factura: ctx.guia.factura||'', patente: ctx.guia.patente||'', retiradoPor: ctx.guia.retiradoPor||'', operadorGrua: ctx.guia.operadorGrua||'',
-    items, tipoReclamo, motivo: observaciones, archivo, posibleDuplicado,
+    items, tipoReclamo, motivo: observaciones, archivos, posibleDuplicado,
     estado:'pendiente', revisadoPor:null, fechaRevision:null, notaRevision:'',
     numeroNotaCredito:'', fechaCierre:null, usuarioCierre:null,
     eventos: [{ tipo:'creada', usuario: usuarioActual, fecha: new Date().toISOString(), comentario:'' }]
@@ -1216,7 +1253,7 @@ function renderTarjetaReclamo(r, contexto){
       </div>
     </div>
     <div class="small-note" style="margin-top:6px;">${r.motivo}</div>
-    ${r.archivo ? `<div style="margin-top:6px;"><a href="${r.archivo.url||r.archivo.dataUrl}" download="${r.archivo.nombre}" target="_blank" class="pill" style="text-decoration:none;">📎 ${r.archivo.nombre}</a></div>` : ''}
+    ${(() => { const lista = (r.archivos && r.archivos.length) ? r.archivos : (r.archivo ? [r.archivo] : []); return lista.length ? `<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">${lista.map(a => `<a href="${a.url||a.dataUrl}" download="${a.nombre}" target="_blank" class="pill" style="text-decoration:none;">📎 ${a.nombre}</a>`).join('')}</div>` : ''; })()}
     ${r.archivoOmitidoEnMigracion ? `<div class="small-note" style="margin-top:4px;">⚠️ El adjunto original de esta solicitud quedó pendiente de migrar (era muy pesado para el traspaso).</div>` : ''}
     <table style="margin-top:8px;">
       <thead><tr><th>Código</th><th>Descripción</th><th>Despachada</th><th>Reclamada</th><th>Motivo</th><th>Control de Calidad</th></tr></thead>
@@ -1341,10 +1378,35 @@ function renderHistorial(){
     <td>${r.estado==='rechazado' ? (r.notaRevision||'-') : '-'}</td>
     <td>${r.numeroNotaCredito||'-'}</td>
     <td>
+      <button class="btn secondary" style="padding:4px 8px;font-size:.72rem;" onclick="verDetalleHistorial('${r.id}')">Ver</button>
       ${tienePermiso('editarRechazadas') && r.estado==='rechazado' ? `<button class="btn secondary" style="padding:4px 8px;font-size:.72rem;" onclick="abrirEdicionReclamo('${r.id}')">Editar</button>` : ''}
       ${tienePermiso('eliminarSolicitudes') ? `<button class="btn danger" style="padding:4px 8px;font-size:.72rem;" onclick="eliminarReclamo('${r.id}')">Eliminar</button>` : ''}
     </td>
   </tr>`).join('');
+}
+// Muestra el detalle completo de una solicitud (todas las líneas, la nota,
+// y el archivo adjunto si tiene) justo debajo de su fila en Historial.
+function verDetalleHistorial(id){
+  const existente = document.getElementById(`detalleHist_${id}`);
+  if(existente){ cerrarDetalleHistorial(id); return; }
+  const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
+  const fila = document.getElementById(`filaHist_${id}`); if(!fila) return;
+  edicionInlineAbierta = true;
+  const detalleId = `detalleHist_${id}`;
+  const filaDetalle = document.createElement('tr');
+  filaDetalle.id = detalleId;
+  filaDetalle.innerHTML = `<td colspan="11" style="background:#f7fafd;">
+    <div style="padding:6px 4px;">
+      ${renderTarjetaReclamo(r, 'historial')}
+      <button class="btn secondary" onclick="cerrarDetalleHistorial('${id}')">Cerrar</button>
+    </div>
+  </td>`;
+  fila.after(filaDetalle);
+}
+function cerrarDetalleHistorial(id){
+  const detalle = document.getElementById(`detalleHist_${id}`);
+  if(detalle) detalle.remove();
+  edicionInlineAbierta = false;
 }
 document.getElementById('filtroHistNV').addEventListener('input', renderHistorial);
 document.getElementById('filtroHistEstado').addEventListener('change', renderHistorial);
@@ -1393,6 +1455,8 @@ function marcarIncompleta(id){
 // Deja agregar lo que falte (texto y/o un adjunto nuevo) y limpia la marca
 // de incompleta para que el gestionador la vea de nuevo como al día.
 function renderFormularioCompletarIncompleta(r){
+  const existentes = (r.archivos && r.archivos.length) ? r.archivos : (r.archivo ? [r.archivo] : []);
+  const cupo = MAX_ADJUNTOS_POR_SOLICITUD - existentes.length;
   return `<div id="tarjeta_${r.id}" style="border:1px solid var(--navy);border-radius:10px;padding:14px 16px;margin-bottom:12px;">
     <strong style="color:var(--navy);">Completando ${r.numero}</strong> <span class="small-note">NV ${r.nv} · Guía N°: ${r.guiaFolio||'-'}</span>
     <div class="small-note" style="margin-top:8px;">⚠️ Lo que pidieron completar: <strong>${r.comentarioIncompleta||''}</strong></div>
@@ -1401,8 +1465,11 @@ function renderFormularioCompletarIncompleta(r){
       <textarea id="completarObs_${r.id}" rows="2" placeholder="Escribe la información que te pidieron..."></textarea>
     </div>
     <div style="margin-top:8px;">
-      <label class="hint" style="display:block;margin-bottom:3px;">Adjuntar foto o archivo nuevo (opcional)</label>
-      <input type="file" id="completarArchivo_${r.id}" accept="image/*,.pdf,.xls,.xlsx,.csv">
+      ${existentes.length ? `<div class="small-note" style="margin-bottom:4px;">Ya adjuntado: ${existentes.map(a=>a.nombre).join(', ')}</div>` : ''}
+      ${cupo>0 ? `
+        <label class="hint" style="display:block;margin-bottom:3px;">Adjuntar foto o archivo nuevo — puedes agregar ${cupo} más (opcional)</label>
+        <input type="file" id="completarArchivo_${r.id}" accept="image/*,.pdf,.xls,.xlsx,.csv" multiple>
+      ` : `<div class="small-note">Ya tiene el máximo de ${MAX_ADJUNTOS_POR_SOLICITUD} adjuntos — no puedes sumar más.</div>`}
     </div>
     <div class="row" style="margin-top:10px;">
       <button class="btn" onclick="guardarCompletarIncompleta('${r.id}')">Enviar complemento</button>
@@ -1425,9 +1492,16 @@ async function guardarCompletarIncompleta(id){
   const status = document.getElementById(`completarStatus_${id}`);
   const agregado = document.getElementById(`completarObs_${id}`).value.trim();
   if(!agregado){ status.textContent = 'Escribe la información que te pidieron antes de enviar.'; return; }
-  let archivo;
-  try{ archivo = await leerArchivoAdjunto(document.getElementById(`completarArchivo_${id}`)); }catch(e){ return; }
-  if(archivo){ status.textContent = 'Subiendo adjunto...'; archivo = await subirAdjuntoSiCorresponde(archivo); if(archivo) r.archivo = archivo; }
+  const existentes = (r.archivos && r.archivos.length) ? r.archivos : (r.archivo ? [r.archivo] : []);
+  const cupo = MAX_ADJUNTOS_POR_SOLICITUD - existentes.length;
+  let nuevos = [];
+  const inputArchivo = document.getElementById(`completarArchivo_${id}`);
+  if(cupo>0 && inputArchivo){
+    try{ nuevos = await leerArchivosAdjuntos(inputArchivo, cupo); }catch(e){ return; }
+    if(nuevos.length){ status.textContent = 'Subiendo adjuntos...'; nuevos = await subirAdjuntosSiCorresponde(nuevos); }
+  }
+  r.archivos = [...existentes, ...nuevos];
+  delete r.archivo;
   r.motivo = `${r.motivo}\n\nComplemento (${new Date().toLocaleString('es-CL')}): ${agregado}`;
   r.incompleta = false;
   const comentarioPrevio = r.comentarioIncompleta;
