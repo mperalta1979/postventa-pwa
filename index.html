@@ -555,6 +555,26 @@ async function dbGuardarConfig(){
     return true;
   }catch(e){ console.warn('No se pudo guardar la configuración en Firestore:', e); return false; }
 }
+// Actualiza SOLO un campo puntual del documento de configuración (ej.
+// "roles.gestionador" o "cuentas.jperez"), en vez de reescribir todo el
+// documento. Esto evita un problema real: el refresco automático cada 30
+// segundos trae y reemplaza cuentas/roles completos — si alguien crea dos
+// roles seguidos y ese refresco cae justo en el medio, un dbGuardarConfig()
+// de todo el objeto podía pisar y perder el primero. Actualizando solo la
+// ruta puntual, un cambio nunca depende de que el resto de la copia local
+// esté 100% al día.
+async function dbActualizarCampoConfig(ruta, valor){
+  try{
+    await db.collection('postventa').doc('config').set({ [ruta]: valor }, { merge:true });
+    return true;
+  }catch(e){ console.warn('No se pudo actualizar la configuración en Firestore:', e); return false; }
+}
+async function dbEliminarCampoConfig(ruta){
+  try{
+    await db.collection('postventa').doc('config').update({ [ruta]: firebase.firestore.FieldValue.delete() });
+    return true;
+  }catch(e){ console.warn('No se pudo eliminar el campo en Firestore:', e); return false; }
+}
 // Reclamos: colección aparte, un documento por solicitud — así cada acción
 // (aprobar, rechazar, cerrar, una solicitud nueva) escribe solo SU propio
 // documento, sin pisar lo que otro usuario esté haciendo al mismo tiempo.
@@ -581,13 +601,24 @@ async function dbReemplazarGuias(lista){
       actual.docs.slice(i,i+450).forEach(d => batch.delete(d.ref));
       await batch.commit();
     }
-    for(let i=0;i<lista.length;i+=450){
+  }catch(e){
+    console.warn('No se pudo borrar las guías anteriores en Firestore:', e);
+    return { ok:false, subidas:0, total:lista.length, error:'No se pudo borrar lo anterior: '+e.message };
+  }
+  let subidas = 0;
+  for(let i=0;i<lista.length;i+=450){
+    const lote = lista.slice(i,i+450);
+    try{
       const batch = db.batch();
-      lista.slice(i,i+450).forEach(g => batch.set(db.collection('guias').doc(String(g.folio)), g));
+      lote.forEach(g => batch.set(db.collection('guias').doc(String(g.folio)), g));
       await batch.commit();
+      subidas += lote.length;
+    }catch(e){
+      console.warn('No se pudo subir un lote de guías a Firestore:', e);
+      return { ok:false, subidas, total:lista.length, error:e.message };
     }
-    return true;
-  }catch(e){ console.warn('No se pudo reemplazar las guías en Firestore:', e); return false; }
+  }
+  return { ok:true, subidas, total:lista.length, error:null };
 }
 // Clientes: colección aparte, un documento por CodAux — se usa para
 // completar Dirección/Comuna/Ciudad/Giro/Teléfono/RUT en Consulta Guías.
@@ -1858,8 +1889,12 @@ document.getElementById('btnProcesarNV').addEventListener('click', () => {
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(ws, {defval:null}); // encabezados en la fila 1
       status.textContent = 'Subiendo a Firestore (puede tardar unos segundos con muchas guías)...';
-      await procesarFilasNV(rows);
-      status.textContent = `Procesado (${file.name}) — ${new Date().toLocaleTimeString('es-CL')}`;
+      const resultado = await procesarFilasNV(rows);
+      if(resultado.ok){
+        status.textContent = `Procesado (${file.name}) — ${resultado.subidas} de ${resultado.total} guías subidas — ${new Date().toLocaleTimeString('es-CL')}`;
+      }else{
+        status.textContent = `⚠️ Se subieron ${resultado.subidas} de ${resultado.total} guías y se detuvo por un error: ${resultado.error}. Vuelve a intentar — no hace falta borrar nada, se reemplaza todo de nuevo.`;
+      }
     }catch(err){
       console.error(err);
       status.textContent = 'No se pudo leer el archivo — revisa que sea el formato correcto.';
@@ -1876,6 +1911,9 @@ async function procesarFilasNV(rows){
     const folio = row['Folio'];
     if(folio===null || folio===undefined || folio==='') return;
     const key = String(folio).trim();
+    // Firestore no acepta IDs vacíos ni con "/" — se descarta la fila en vez
+    // de romper toda la carga por un solo dato corrupto.
+    if(!key || key.includes('/')) return;
     if(!porFolio[key]){
       const facturaVal = row['Factura'];
       porFolio[key] = {
@@ -1908,8 +1946,9 @@ async function procesarFilasNV(rows){
     }
   });
   guiasDatos = Object.values(porFolio);
-  await dbReemplazarGuias(guiasDatos);
+  const resultado = await dbReemplazarGuias(guiasDatos);
   renderStatsImportNV();
+  return resultado;
 }
 function renderStatsImportNV(){
   const cont = document.getElementById('statsImportNV');
@@ -2017,7 +2056,7 @@ function cambiarFacultadRol(clave, facultad, valor){
     }
   }
   roles[clave][facultad] = valor;
-  dbGuardarConfig();
+  dbActualizarCampoConfig(`roles.${clave}.${facultad}`, valor);
   if(clave===rolActual) entrarApp(); // si te cambiaste facultades a ti mismo, refresca lo que ves
 }
 document.getElementById('btnCrearRol').addEventListener('click', () => {
@@ -2028,7 +2067,7 @@ document.getElementById('btnCrearRol').addEventListener('click', () => {
   const clave = (nombre.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'')) || `rol_${Date.now()}`;
   if(roles[clave]){ status.textContent = 'Ya existe un rol con ese nombre.'; return; }
   roles[clave] = { nombre, protegido:false, ...facultadesEnBlanco() };
-  dbGuardarConfig();
+  dbActualizarCampoConfig(`roles.${clave}`, roles[clave]);
   document.getElementById('nuevoRolNombre').value = '';
   status.textContent = `Rol "${nombre}" creado — actívale las facultades que necesite.`;
   renderRoles();
@@ -2041,7 +2080,7 @@ function eliminarRol(clave){
   if(enUso>0){ alert(`No puedes eliminar este rol — hay ${enUso} usuario(s) que lo tienen asignado. Cámbiales el rol primero desde Usuarios.`); return; }
   if(!confirm(`¿Eliminar el rol "${roles[clave].nombre}"?`)) return;
   delete roles[clave];
-  dbGuardarConfig();
+  dbEliminarCampoConfig(`roles.${clave}`);
   renderRoles();
   renderUsuarios();
 }
@@ -2090,7 +2129,7 @@ function cambiarRolUsuario(u, nuevoRol){
     return;
   }
   cuentas[u].rol = nuevoRol;
-  dbGuardarConfig();
+  dbActualizarCampoConfig(`cuentas.${u}.rol`, nuevoRol);
   renderUsuarios();
 }
 function abrirEditarVendedorAsociado(u){
@@ -2099,7 +2138,7 @@ function abrirEditarVendedorAsociado(u){
   const nuevo = prompt(`Vendedor(es) asociado(s) para "${u}" (sepáralos con coma si son varios):`, actual);
   if(nuevo === null) return; // canceló
   cuentas[u].vendedorAsociado = nuevo.trim();
-  dbGuardarConfig();
+  dbActualizarCampoConfig(`cuentas.${u}.vendedorAsociado`, cuentas[u].vendedorAsociado);
   renderUsuarios();
 }
 document.getElementById('btnCrearUsuario').addEventListener('click', async () => {
@@ -2114,7 +2153,7 @@ document.getElementById('btnCrearUsuario').addEventListener('click', async () =>
   if(!roles[rol]){ status.textContent = 'Elige un rol válido.'; return; }
   if(!roles[rol].verTodasNV && !vendedor){ status.textContent = 'Para este rol, indica el "Vendedor asociado" (tal como aparece en las NV).'; return; }
   cuentas[nombre] = { passwordHash: await hashPassword(clave), rol, vendedorAsociado: !roles[rol].verTodasNV?vendedor:'' };
-  dbGuardarConfig();
+  dbActualizarCampoConfig(`cuentas.${nombre}`, cuentas[nombre]);
   document.getElementById('nuevoUsuarioNombre').value = '';
   document.getElementById('nuevoUsuarioClave').value = '';
   document.getElementById('nuevoUsuarioVendedor').value = '';
@@ -2126,7 +2165,7 @@ async function abrirCambiarClave(u){
   const nueva = prompt(`Nueva clave para "${u}":`);
   if(!nueva) return;
   cuentas[u].passwordHash = await hashPassword(nueva);
-  dbGuardarConfig();
+  dbActualizarCampoConfig(`cuentas.${u}.passwordHash`, cuentas[u].passwordHash);
   alert('Clave actualizada.');
 }
 function eliminarUsuario(u){
@@ -2135,7 +2174,7 @@ function eliminarUsuario(u){
   if(roles[cuentas[u].rol] && roles[cuentas[u].rol].accesoMaestro && contarConAccesoMaestro(u)===0){ alert('Debe quedar al menos un usuario con acceso al Maestro.'); return; }
   if(!confirm(`¿Eliminar el usuario "${u}"?`)) return;
   delete cuentas[u];
-  dbGuardarConfig();
+  dbEliminarCampoConfig(`cuentas.${u}`);
   renderUsuarios();
 }
 
