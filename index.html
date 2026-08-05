@@ -251,6 +251,7 @@
           </select>
           <input type="text" id="buscarTiempoInput" placeholder="Ingresa el número...">
           <button class="btn" id="btnBuscarTiempo">Buscar</button>
+          <button class="btn secondary" id="btnLimpiarTiempo" type="button">Limpiar</button>
         </div>
         <div id="resultadoBusquedaTiempo" style="margin-top:16px;"></div>
         <div id="vistaLineaTiempo" style="margin-top:16px;"></div>
@@ -270,6 +271,7 @@
           </select>
           <input type="text" id="buscarNVInput" placeholder="Número...">
           <button class="btn" id="btnBuscarNV">Buscar</button>
+          <button class="btn secondary" id="btnLimpiarNueva" type="button">Limpiar</button>
         </div>
         <div id="resultadoBusquedaNV" style="margin-top:16px;"></div>
       </div>
@@ -830,7 +832,7 @@ function renderTodo(){
   renderNotifBadge();
 }
 // ==================== Notificaciones ====================
-const NOTIF_ICONO = { nueva_solicitud:'🆕', recibida:'📥', incompleta:'⚠️', rechazada:'❌' };
+const NOTIF_ICONO = { nueva_solicitud:'🆕', recibida:'📥', incompleta:'⚠️', completada:'✍️', rechazada:'❌' };
 function notificacionesDe(usuario){
   return notificaciones.filter(n => n.para===usuario || (n.para==='ADMIN' && tienePermiso('verTodasSolicitudes')));
 }
@@ -846,7 +848,7 @@ function renderNotifPanel(){
   const panel = document.getElementById('notifPanel');
   const lista = notificacionesDe(usuarioActual).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
   panel.innerHTML = lista.length ? lista.map(n => `
-    <div onclick="marcarNotificacionLeida('${n.id}')" style="padding:8px;border-bottom:1px solid var(--border);cursor:pointer;${n.leida?'opacity:.55;':''}">
+    <div onclick="irANotificacion('${n.id}')" style="padding:8px;border-bottom:1px solid var(--border);cursor:pointer;${n.leida?'opacity:.55;':''}">
       <div style="font-size:.82rem;">${NOTIF_ICONO[n.tipo]||'🔔'} ${n.mensaje}</div>
       <div class="small-note" style="margin-top:2px;">${new Date(n.fecha).toLocaleString('es-CL')}</div>
     </div>`).join('') : `<div class="small-note" style="padding:10px;">No tienes notificaciones.</div>`;
@@ -856,6 +858,17 @@ function marcarNotificacionLeida(id){
   n.leida = true;
   dbMarcarNotificacionLeida(id);
   renderNotifBadge();
+}
+// Al hacer clic en una notificación, además de marcarla leída, te lleva
+// directo a la pestaña donde está esa solicitud (según el tipo de aviso) —
+// así no hay que ir a buscarla a mano.
+const NOTIF_DESTINO_TAB = { nueva_solicitud:'pendientes', incompleta:'pendientes', completada:'pendientes', recibida:'revision', rechazada:'historial' };
+function irANotificacion(id){
+  const n = notificaciones.find(x=>x.id===id); if(!n) return;
+  marcarNotificacionLeida(id);
+  document.getElementById('notifPanel').style.display = 'none';
+  const destino = NOTIF_DESTINO_TAB[n.tipo];
+  if(destino) document.querySelector(`#tabs button[data-tab="${destino}"]`).click();
 }
 document.getElementById('btnNotificaciones').addEventListener('click', (e) => {
   e.stopPropagation();
@@ -901,6 +914,13 @@ document.getElementById('navMaestro').addEventListener('click', () => {
 
 // ==================== Postventa: búsqueda y nueva solicitud ====================
 document.getElementById('btnBuscarNV').addEventListener('click', buscarDocumentoNV);
+document.getElementById('btnLimpiarNueva').addEventListener('click', () => {
+  document.getElementById('buscarNVInput').value = '';
+  document.getElementById('tipoBusquedaSel').value = 'guia';
+  document.getElementById('resultadoBusquedaNV').innerHTML = '';
+  window.__busquedaNVActual = null;
+  window.__candidatasGuia = null;
+});
 document.getElementById('buscarNVInput').addEventListener('keydown', (e)=>{ if(e.key==='Enter') buscarDocumentoNV(); });
 function buscarDocumentoNV(){
   const tipo = document.getElementById('tipoBusquedaSel').value; // 'guia'|'nv'|'factura'
@@ -1017,13 +1037,11 @@ function mostrarFormularioGuia(guia){
     </div>
     <div class="row" style="margin-top:10px;">
       <button class="btn" id="btnEnviarReclamo">Enviar solicitud de Postventa</button>
-      <button class="btn secondary" id="btnLimpiarSolicitud" type="button">Limpiar solicitud</button>
       <span id="envioReclamoStatus" class="hint"></span>
     </div>
   `;
   window.__busquedaNVActual = { nv: guia.nv, data: guia, guia: guia };
   document.getElementById('btnEnviarReclamo').addEventListener('click', enviarSolicitud);
-  document.getElementById('btnLimpiarSolicitud').addEventListener('click', () => mostrarFormularioGuia(guia));
 }
 // Con Cloudinary configurado: hasta 4MB, se sube el archivo y solo se guarda
 // la URL. Sin Cloudinary: el archivo se guarda completo dentro del documento
@@ -1165,6 +1183,7 @@ function renderTarjetaReclamo(r, contexto){
       <button class="btn secondary" onclick="marcarIncompleta('${r.id}')">Recibida/Incompleta</button>`;
     if(tienePermiso('rechazarSolicitudes')) acciones += `<button class="btn danger" onclick="rechazarReclamo('${r.id}')">Rechazar</button>`;
     if(tienePermiso('eliminarSolicitudes')) acciones += `<button class="btn danger" onclick="eliminarReclamo('${r.id}')">Eliminar</button>`;
+    if(r.incompleta && r.usuarioSolicitante===usuarioActual) acciones += `<button class="btn" onclick="abrirCompletarIncompleta('${r.id}')">Completar solicitud</button>`;
   } else if(contexto==='revision' && (tienePermiso('cerrarSolicitudes') || tienePermiso('eliminarSolicitudes'))){
     acciones = `
       <div style="margin-top:8px;">
@@ -1328,6 +1347,7 @@ const EVENTO_ETIQUETA = {
   creada:'Solicitud creada',
   recibida:'Solicitud Recibida',
   incompleta:'Marcada Recibida/Incompleta',
+  completada:'Complementada por el solicitante',
   rechazada:'Rechazada',
   reabierta:'Editada y reabierta',
   cerrada:'Cerrada',
@@ -1359,6 +1379,53 @@ function marcarIncompleta(id){
   registrarEvento(r, 'incompleta', comentario);
   dbGuardarReclamo(r);
   crearNotificacion(r.usuarioSolicitante, 'incompleta', `Tu solicitud ${r.numero} (NV ${r.nv}) fue recibida pero está incompleta: ${comentario}`, r.id);
+  renderPendientes();
+}
+// ---- Completar una solicitud marcada Recibida/Incompleta (el propio solicitante) ----
+// Deja agregar lo que falte (texto y/o un adjunto nuevo) y limpia la marca
+// de incompleta para que el gestionador la vea de nuevo como al día.
+function renderFormularioCompletarIncompleta(r){
+  return `<div id="tarjeta_${r.id}" style="border:1px solid var(--navy);border-radius:10px;padding:14px 16px;margin-bottom:12px;">
+    <strong style="color:var(--navy);">Completando ${r.numero}</strong> <span class="small-note">NV ${r.nv} · Guía N°: ${r.guiaFolio||'-'}</span>
+    <div class="small-note" style="margin-top:8px;">⚠️ Lo que pidieron completar: <strong>${r.comentarioIncompleta||''}</strong></div>
+    <div style="margin-top:8px;">
+      <label class="hint" style="display:block;margin-bottom:3px;">Agrega aquí lo que falta (se suma a tus observaciones originales)</label>
+      <textarea id="completarObs_${r.id}" rows="2" placeholder="Escribe la información que te pidieron..."></textarea>
+    </div>
+    <div style="margin-top:8px;">
+      <label class="hint" style="display:block;margin-bottom:3px;">Adjuntar foto o archivo nuevo (opcional)</label>
+      <input type="file" id="completarArchivo_${r.id}" accept="image/*,.pdf,.xls,.xlsx,.csv">
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <button class="btn" onclick="guardarCompletarIncompleta('${r.id}')">Enviar complemento</button>
+      <button class="btn secondary" onclick="cancelarCompletarIncompleta()">Cancelar</button>
+      <span id="completarStatus_${r.id}" class="hint"></span>
+    </div>
+  </div>`;
+}
+function abrirCompletarIncompleta(id){
+  const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
+  if(r.usuarioSolicitante!==usuarioActual) return;
+  const el = document.getElementById(`tarjeta_${id}`); if(!el) return;
+  el.outerHTML = renderFormularioCompletarIncompleta(r);
+}
+function cancelarCompletarIncompleta(){ renderPendientes(); }
+async function guardarCompletarIncompleta(id){
+  const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
+  if(r.usuarioSolicitante!==usuarioActual) return;
+  const status = document.getElementById(`completarStatus_${id}`);
+  const agregado = document.getElementById(`completarObs_${id}`).value.trim();
+  if(!agregado){ status.textContent = 'Escribe la información que te pidieron antes de enviar.'; return; }
+  let archivo;
+  try{ archivo = await leerArchivoAdjunto(document.getElementById(`completarArchivo_${id}`)); }catch(e){ return; }
+  if(archivo){ status.textContent = 'Subiendo adjunto...'; archivo = await subirAdjuntoSiCorresponde(archivo); if(archivo) r.archivo = archivo; }
+  r.motivo = `${r.motivo}\n\nComplemento (${new Date().toLocaleString('es-CL')}): ${agregado}`;
+  r.incompleta = false;
+  const comentarioPrevio = r.comentarioIncompleta;
+  r.comentarioIncompleta = '';
+  registrarEvento(r, 'completada', agregado);
+  await dbGuardarReclamo(r);
+  crearNotificacion('ADMIN', 'completada', `${usuarioActual} completó la solicitud ${r.numero} (NV ${r.nv}) — lo que faltaba: "${comentarioPrevio}". Ya se puede revisar de nuevo.`, r.id);
   renderPendientes();
 }
 // El motivo de rechazo es obligatorio — si cancela o lo deja vacío, no hace nada.
@@ -1803,6 +1870,11 @@ for (var fila = 0; fila < 6; fila++) {
 
 // ==================== Línea de Tiempo ====================
 document.getElementById('btnBuscarTiempo').addEventListener('click', buscarParaLineaDeTiempo);
+document.getElementById('btnLimpiarTiempo').addEventListener('click', () => {
+  document.getElementById('buscarTiempoInput').value = '';
+  document.getElementById('resultadoBusquedaTiempo').innerHTML = '';
+  document.getElementById('vistaLineaTiempo').innerHTML = '';
+});
 function buscarParaLineaDeTiempo(){
   const tipo = document.getElementById('tipoBusquedaTiempo').value;
   const valor = document.getElementById('buscarTiempoInput').value.trim();
@@ -1840,8 +1912,8 @@ function verLineaDeTiempo(id){
   document.getElementById('buscarTiempoInput').value = '';
   renderLineaDeTiempo(id);
 }
-const EVENTO_ICONO = { creada:'📝', recibida:'📥', incompleta:'⚠️', rechazada:'❌', reabierta:'🔁', cerrada:'🏁', calidad_aprobada:'✅', calidad_rechazada:'🚫' };
-const EVENTO_COLOR = { creada:'', recibida:'ok', incompleta:'warn', rechazada:'alert', reabierta:'warn', cerrada:'ok', calidad_aprobada:'ok', calidad_rechazada:'alert' };
+const EVENTO_ICONO = { creada:'📝', recibida:'📥', incompleta:'⚠️', completada:'✍️', rechazada:'❌', reabierta:'🔁', cerrada:'🏁', calidad_aprobada:'✅', calidad_rechazada:'🚫' };
+const EVENTO_COLOR = { creada:'', recibida:'ok', incompleta:'warn', completada:'ok', rechazada:'alert', reabierta:'warn', cerrada:'ok', calidad_aprobada:'ok', calidad_rechazada:'alert' };
 function renderLineaDeTiempo(id){
   const r = reclamosPostventa.find(x=>x.id===id);
   const cont = document.getElementById('vistaLineaTiempo');
