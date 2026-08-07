@@ -154,6 +154,7 @@
   </nav>
   <nav id="subnavMaestro" style="display:none;background:var(--navy-dark);">
     <button data-tab="importar">Importar NV</button>
+    <button id="navImportarHistorico" data-tab="historico" style="display:none;">Importar Histórico</button>
     <button data-tab="usuarios">Usuarios</button>
     <button data-tab="roles">Roles</button>
     <button data-tab="motivos">Motivos Reclamo Post Venta</button>
@@ -311,7 +312,7 @@
         </div>
         <div class="table-scroll">
           <table>
-            <thead><tr><th>N°</th><th>Fecha</th><th>NV</th><th>Guía</th><th>Cliente</th><th>Solicitante</th><th>Tipo</th><th>Estado</th><th>Motivo Rechazo</th><th>N° Sol. Nota Crédito</th><th></th></tr></thead>
+            <thead><tr><th>N°</th><th>Fecha</th><th>NV</th><th>Guía</th><th>Cliente</th><th>Solicitante</th><th>Tipo</th><th>Estado</th><th>Motivo Rechazo</th><th>N° Sol. Nota Crédito</th><th>Número de NC</th><th></th></tr></thead>
             <tbody id="tbodyHistorial"></tbody>
           </table>
         </div>
@@ -340,6 +341,20 @@
           <span id="importClientesStatus" class="hint"></span>
         </div>
         <div class="stat-grid" style="margin-top:16px;" id="statsImportClientes"></div>
+      </div>
+    </section>
+
+    <!-- IMPORTAR HISTÓRICO (solo Admin) -->
+    <section id="tab-historico" class="tab">
+      <div class="panel">
+        <h2>Importar Histórico</h2>
+        <p class="hint">Carga solicitudes de postventa anteriores a esta app, para tener datos con los que alimentar el Historial y el Dashboard. No borra ni reemplaza nada de lo que ya existe — cada carga se suma a lo actual.</p>
+        <p class="hint">Completa la plantilla que te dieron (una fila por cada código reclamado) y súbela aquí.</p>
+        <div class="row">
+          <input type="file" id="fileInputHistorico" accept=".xlsx,.xls">
+          <button class="btn" id="btnProcesarHistorico">Procesar archivo</button>
+          <span id="importHistoricoStatus" class="hint"></span>
+        </div>
       </div>
     </section>
 
@@ -812,6 +827,7 @@ function entrarApp(){
   document.querySelectorAll('.admin-only').forEach(el => el.style.display = tienePermiso('accesoMaestro') ? '' : 'none');
   document.getElementById('navDashboard').style.display = tienePermiso('verDashboard') ? '' : 'none';
   document.getElementById('navConsultaGuias').style.display = tienePermiso('consultaGuias') ? '' : 'none';
+  document.getElementById('navImportarHistorico').style.display = esAdmin() ? '' : 'none';
   document.getElementById('hintConsultaGuias').textContent = tienePermiso('verTodasNV')
     ? 'Busca por N° de Guía, N° de NV o N° de Factura para ver el formato de la guía — puedes ver cualquier documento.'
     : `Busca por N° de Guía, N° de NV o N° de Factura para ver el formato de la guía — solo puedes ver documentos de tu propio vendedor (${miVendedor()||'sin asignar'}).`;
@@ -905,7 +921,7 @@ document.querySelectorAll('#tabs button[data-tab], #subnavMaestro button[data-ta
     else document.getElementById('navMaestro').classList.remove('active');
   });
 });
-const SECCIONES_MAESTRO = ['importar','usuarios','roles','motivos','tiposreclamo','config'];
+const SECCIONES_MAESTRO = ['importar','historico','usuarios','roles','motivos','tiposreclamo','config'];
 document.getElementById('navMaestro').addEventListener('click', () => {
   const sub = document.getElementById('subnavMaestro');
   const abrir = sub.style.display === 'none';
@@ -1186,7 +1202,7 @@ async function enviarSolicitud(){
     guiaFolio: ctx.guia.folio||'', factura: ctx.guia.factura||'', patente: ctx.guia.patente||'', retiradoPor: ctx.guia.retiradoPor||'', operadorGrua: ctx.guia.operadorGrua||'',
     items, tipoReclamo, motivo: observaciones, archivos, posibleDuplicado,
     estado:'pendiente', revisadoPor:null, fechaRevision:null, notaRevision:'',
-    numeroNotaCredito:'', fechaCierre:null, usuarioCierre:null,
+    numeroNotaCredito:'', numeroNC:'', fechaCierre:null, usuarioCierre:null,
     eventos: [{ tipo:'creada', usuario: usuarioActual, fecha: new Date().toISOString(), comentario:'' }]
   };
   reclamosPostventa.push(nuevoReclamo);
@@ -1204,13 +1220,14 @@ async function enviarSolicitud(){
 function renderTarjetaReclamo(r, contexto){
   const puedeCalidad = contexto==='revision' && tienePermiso('controlCalidad');
   const filasItems = r.items.map((it, idx) => {
+    const fotos = (it.fotosCalidad||[]).map(a => `<a href="${a.url||a.dataUrl}" target="_blank" class="pill" style="text-decoration:none;font-size:.68rem;">📷 ${a.nombre}</a>`).join(' ');
     const estadoCalidad = it.estadoCalidad
-      ? `<div class="small-note">${it.estadoCalidad==='aprobado'?'✅ Aprobado':'❌ Rechazado'} por ${it.usuarioCalidad} — ${new Date(it.fechaCalidad).toLocaleDateString('es-CL')}<br>${it.comentarioCalidad||''}</div>`
+      ? `<div class="small-note">${it.estadoCalidad==='aprobado'?'✅ Aprobado':'❌ Rechazado'} por ${it.usuarioCalidad} — ${new Date(it.fechaCalidad).toLocaleDateString('es-CL')}<br>${it.comentarioCalidad||''}${fotos?`<br>${fotos}`:''}</div>`
       : '';
     const botonesCalidad = puedeCalidad
       ? `<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px;">
-          <button class="btn secondary" style="padding:3px 7px;font-size:.7rem;" onclick="marcarCalidadItem('${r.id}',${idx},'aprobado')">Aprueba C.Calidad</button>
-          <button class="btn danger" style="padding:3px 7px;font-size:.7rem;" onclick="marcarCalidadItem('${r.id}',${idx},'rechazado')">Rechaza Control de Calidad</button>
+          <button class="btn secondary" style="padding:3px 7px;font-size:.7rem;" onclick="abrirCalidadItem('${r.id}',${idx},'aprobado')">Aprueba C.Calidad</button>
+          <button class="btn danger" style="padding:3px 7px;font-size:.7rem;" onclick="abrirCalidadItem('${r.id}',${idx},'rechazado')">Rechaza Control de Calidad</button>
         </div>`
       : '';
     return `<tr><td>${it.codigo}</td><td>${it.descripcion}</td><td>${fmt(it.cantidadDespachada||0,2)}</td><td>${fmt(it.cantidad,2)}</td><td>${it.motivo||'-'}</td><td>${estadoCalidad}${botonesCalidad}</td></tr>`;
@@ -1234,6 +1251,10 @@ function renderTarjetaReclamo(r, contexto){
         <div>
           <label class="hint" style="display:block;margin-bottom:3px;">N° de Solicitud de Nota de Crédito</label>
           <input type="text" id="ncInput_${r.id}" value="${r.numeroNotaCredito||''}" style="width:160px;">
+        </div>
+        <div>
+          <label class="hint" style="display:block;margin-bottom:3px;">Número de NC</label>
+          <input type="text" id="ncFinalInput_${r.id}" value="${r.numeroNC||''}" style="width:160px;">
         </div>
         ${tienePermiso('cerrarSolicitudes') ? `<button class="btn" onclick="cerrarReclamo('${r.id}')">Cerrar solicitud</button>` : ''}
         ${tienePermiso('eliminarSolicitudes') ? `<button class="btn danger" onclick="eliminarReclamo('${r.id}')">Eliminar</button>` : ''}
@@ -1259,7 +1280,11 @@ function renderTarjetaReclamo(r, contexto){
     ${r.incompleta ? `<div class="small-note" style="margin-top:6px;">⚠️ Marcada Recibida/Incompleta por ${r.revisadoPor} — ${r.fechaRevision?new Date(r.fechaRevision).toLocaleString('es-CL'):''}${r.comentarioIncompleta?': '+r.comentarioIncompleta:''}</div>` : ''}
     ${r.estado==='aprobado' && r.revisadoPor ? `<div class="small-note" style="margin-top:6px;">Solicitud Recibida por ${r.revisadoPor} — ${new Date(r.fechaRevision).toLocaleString('es-CL')} (a cargo del caso)</div>` : ''}
     ${r.estado==='rechazado' ? `<div class="small-note" style="margin-top:6px;">Rechazado por ${r.revisadoPor} — ${new Date(r.fechaRevision).toLocaleString('es-CL')} · Motivo de rechazo: <strong>${r.notaRevision||'-'}</strong></div>` : ''}
-    ${r.estado==='cerrado' ? `<div class="small-note" style="margin-top:6px;">Cerrado por ${r.usuarioCierre} — ${new Date(r.fechaCierre).toLocaleString('es-CL')} · N° Sol. NC: <strong>${r.numeroNotaCredito}</strong></div>` : ''}
+    ${r.estado==='cerrado' ? `<div class="small-note" style="margin-top:6px;">Cerrado por ${r.usuarioCierre} — ${new Date(r.fechaCierre).toLocaleString('es-CL')} · N° Sol. NC: <strong>${r.numeroNotaCredito}</strong>
+      ${tienePermiso('cerrarSolicitudes')
+        ? `<br>Número de NC: <input type="text" value="${r.numeroNC||''}" style="width:140px;" onchange="actualizarNumeroNC('${r.id}', this.value)">`
+        : ` · Número de NC: <strong>${r.numeroNC||'pendiente'}</strong>`}
+    </div>` : ''}
     <div style="margin-top:10px;">${acciones} <button class="btn secondary" onclick="verLineaDeTiempo('${r.id}')">Ver línea de tiempo</button></div>
   </div>`;
 }
@@ -1277,7 +1302,7 @@ function renderFormularioEdicionReclamo(r){
         </select>
       </td>
     </tr>`).join('');
-  return `<tr id="filaHist_${r.id}"><td colspan="11" style="background:#f7fafd;">
+  return `<tr id="filaHist_${r.id}"><td colspan="12" style="background:#f7fafd;">
     <div style="border:1px solid var(--navy);border-radius:10px;padding:14px 16px;margin:8px 0;">
       <strong style="color:var(--navy);">Editando ${r.numero}</strong> <span class="small-note">NV ${r.nv} · Guía N°: ${r.guiaFolio||'-'}</span>
       <div style="margin-top:8px;">
@@ -1374,6 +1399,7 @@ function renderHistorial(){
     <td><span class="pill ${ESTADO_RECLAMO_PILL[r.estado]}">${ESTADO_RECLAMO_LABEL[r.estado]}</span></td>
     <td>${r.estado==='rechazado' ? (r.notaRevision||'-') : '-'}</td>
     <td>${r.numeroNotaCredito||'-'}</td>
+    <td>${r.numeroNC||'-'}</td>
     <td>
       <button class="btn secondary" style="padding:4px 8px;font-size:.72rem;" onclick="verDetalleHistorial('${r.id}')">Ver</button>
       ${tienePermiso('editarRechazadas') && r.estado==='rechazado' ? `<button class="btn secondary" style="padding:4px 8px;font-size:.72rem;" onclick="abrirEdicionReclamo('${r.id}')">Editar</button>` : ''}
@@ -1392,7 +1418,7 @@ function verDetalleHistorial(id){
   const detalleId = `detalleHist_${id}`;
   const filaDetalle = document.createElement('tr');
   filaDetalle.id = detalleId;
-  filaDetalle.innerHTML = `<td colspan="11" style="background:#f7fafd;">
+  filaDetalle.innerHTML = `<td colspan="12" style="background:#f7fafd;">
     <div style="padding:6px 4px;">
       ${renderTarjetaReclamo(r, 'historial')}
       <button class="btn secondary" onclick="cerrarDetalleHistorial('${id}')">Cerrar</button>
@@ -1532,27 +1558,70 @@ function cerrarReclamo(id){
   const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
   const nc = document.getElementById(`ncInput_${id}`).value.trim();
   if(!nc){ alert('Ingresa el N° de Solicitud de Nota de Crédito para poder cerrar.'); return; }
-  r.numeroNotaCredito=nc; r.estado='cerrado'; r.fechaCierre=new Date().toISOString(); r.usuarioCierre=usuarioActual;
+  const ncFinalEl = document.getElementById(`ncFinalInput_${id}`);
+  r.numeroNotaCredito=nc; r.numeroNC = ncFinalEl ? ncFinalEl.value.trim() : (r.numeroNC||'');
+  r.estado='cerrado'; r.fechaCierre=new Date().toISOString(); r.usuarioCierre=usuarioActual;
   registrarEvento(r, 'cerrada', `N° Sol. NC: ${nc}`);
   dbGuardarReclamo(r); renderRevision(); renderHistorial();
 }
+// El Número de NC final suele llegar después de cerrar (lo emite
+// contabilidad) — se puede completar o corregir en cualquier momento.
+function actualizarNumeroNC(id, valor){
+  if(!tienePermiso('cerrarSolicitudes')) return;
+  const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
+  r.numeroNC = valor.trim();
+  dbGuardarReclamo(r);
+}
 // Cada código reclamado se aprueba o rechaza por separado en Control de
 // Calidad — el comentario es obligatorio en ambos casos.
-function marcarCalidadItem(id, idx, resultado){
+// ---- Control de Calidad por línea (con hasta 3 fotos) ----
+function renderFormularioCalidadItem(r, idx, resultado){
+  const item = r.items[idx];
+  const etiqueta = resultado==='aprobado' ? 'Aprueba C.Calidad' : 'Rechaza Control de Calidad';
+  return `<div id="tarjeta_${r.id}" style="border:1px solid var(--navy);border-radius:10px;padding:14px 16px;margin-bottom:12px;">
+    <strong style="color:var(--navy);">${etiqueta} — ${r.numero}</strong>
+    <div class="small-note" style="margin-top:4px;">Código <strong>${item.codigo}</strong> — ${item.descripcion}</div>
+    <div style="margin-top:8px;">
+      <label class="hint" style="display:block;margin-bottom:3px;">Comentario (obligatorio)</label>
+      <textarea id="calidadComentario_${r.id}_${idx}" rows="2"></textarea>
+    </div>
+    <div style="margin-top:8px;">
+      <label class="hint" style="display:block;margin-bottom:3px;">Fotos — hasta ${MAX_ADJUNTOS_POR_SOLICITUD} (opcional)</label>
+      <input type="file" id="calidadFotos_${r.id}_${idx}" accept="image/*" multiple>
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <button class="btn" onclick="guardarCalidadItem('${r.id}',${idx},'${resultado}')">Guardar</button>
+      <button class="btn secondary" onclick="cancelarCalidadItem()">Cancelar</button>
+      <span id="calidadStatus_${r.id}_${idx}" class="hint"></span>
+    </div>
+  </div>`;
+}
+function abrirCalidadItem(id, idx, resultado){
+  if(!tienePermiso('controlCalidad')) return;
+  const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
+  const el = document.getElementById(`tarjeta_${id}`); if(!el) return;
+  el.outerHTML = renderFormularioCalidadItem(r, idx, resultado);
+  edicionInlineAbierta = true;
+}
+function cancelarCalidadItem(){ edicionInlineAbierta = false; renderRevision(); }
+async function guardarCalidadItem(id, idx, resultado){
   if(!tienePermiso('controlCalidad')) return;
   const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
   const item = r.items[idx]; if(!item) return;
-  const etiqueta = resultado==='aprobado' ? 'Aprueba C.Calidad' : 'Rechaza Control de Calidad';
-  let comentario = prompt(`Comentario para "${etiqueta}" — código ${item.codigo} (obligatorio):`, '');
-  if(comentario===null) return;
-  comentario = comentario.trim();
-  if(!comentario){ alert('Debes escribir un comentario.'); return; }
+  const status = document.getElementById(`calidadStatus_${id}_${idx}`);
+  const comentario = document.getElementById(`calidadComentario_${id}_${idx}`).value.trim();
+  if(!comentario){ status.textContent = 'Debes escribir un comentario.'; return; }
+  let fotos = [];
+  try{ fotos = await leerArchivosAdjuntos(document.getElementById(`calidadFotos_${id}_${idx}`), MAX_ADJUNTOS_POR_SOLICITUD); }catch(e){ return; }
+  if(fotos.length){ status.textContent = 'Subiendo fotos...'; fotos = await subirAdjuntosSiCorresponde(fotos); }
   item.estadoCalidad = resultado;
   item.comentarioCalidad = comentario;
   item.usuarioCalidad = usuarioActual;
   item.fechaCalidad = new Date().toISOString();
+  item.fotosCalidad = fotos;
   registrarEvento(r, resultado==='aprobado'?'calidad_aprobada':'calidad_rechazada', `Código ${item.codigo}: ${comentario}`);
-  dbGuardarReclamo(r);
+  await dbGuardarReclamo(r);
+  edicionInlineAbierta = false;
   renderRevision();
 }
 // Elimina una solicitud por completo (para pruebas o errores de un usuario)
@@ -2169,6 +2238,128 @@ function renderStatsImportClientes(){
     <div class="stat"><div class="num">${Object.keys(clientesDatos).length}</div><div class="lbl">Clientes cargados</div></div>
     <div class="stat"><div class="num">${conDireccion}</div><div class="lbl">Con dirección informada</div></div>
   `;
+}
+
+// ==================== Importar Histórico (solo Admin) ====================
+const ESTADO_DESDE_TEXTO = { pendiente:'pendiente', aprobado:'aprobado', rechazado:'rechazado', cerrado:'cerrado' };
+// Acepta dd-mm-aaaa / dd/mm/aaaa como texto, o una fecha real si Excel la
+// guardó como fecha (cellDates:true ya la entrega como objeto Date).
+function parsearFechaHistorico(valor){
+  if(!valor) return null;
+  if(valor instanceof Date && !isNaN(valor)) return valor.toISOString();
+  const s = String(valor).trim();
+  if(!s) return null;
+  const m = s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})$/);
+  if(m){
+    const d = new Date(Number(m[3]), Number(m[2])-1, Number(m[1]));
+    return isNaN(d) ? null : d.toISOString();
+  }
+  const intento = new Date(s);
+  return isNaN(intento) ? null : intento.toISOString();
+}
+document.getElementById('btnProcesarHistorico').addEventListener('click', () => {
+  if(!esAdmin()) return;
+  const input = document.getElementById('fileInputHistorico');
+  const status = document.getElementById('importHistoricoStatus');
+  if(!input.files.length){ status.textContent = 'Selecciona un archivo primero.'; return; }
+  const file = input.files[0];
+  status.textContent = 'Procesando...';
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    try{
+      const data = new Uint8Array(e.target.result);
+      const wb = XLSX.read(data, {type:'array', cellDates:true});
+      const ws = wb.Sheets['Datos'] || wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, {defval:null});
+      status.textContent = 'Subiendo a Firestore...';
+      const resultado = await procesarFilasHistorico(rows);
+      if(resultado.ok){
+        status.textContent = `Listo — ${resultado.solicitudes} solicitudes (${resultado.subidas} guardadas) importadas desde ${file.name}.`;
+      }else{
+        status.textContent = `⚠️ Se guardaron ${resultado.subidas} de ${resultado.total} filas y se detuvo por un error: ${resultado.error}. Revisa el archivo y vuelve a intentar solo con las solicitudes que faltaron (para no duplicar las que ya quedaron guardadas).`;
+      }
+    }catch(err){
+      console.error(err);
+      status.textContent = 'No se pudo leer el archivo — revisa que sea el formato de la plantilla.';
+    }
+  };
+  reader.readAsArrayBuffer(file);
+});
+async function procesarFilasHistorico(rows){
+  const porSolicitud = {};
+  const orden = [];
+  rows.forEach(row => {
+    const num = (row['N Solicitud']||'').toString().trim();
+    if(!num) return;
+    if(!porSolicitud[num]){
+      porSolicitud[num] = {
+        numero: num,
+        fecha: parsearFechaHistorico(row['Fecha Solicitud']) || new Date().toISOString(),
+        usuarioSolicitante: (row['Usuario Solicitante']||'').toString().trim() || 'histórico',
+        nv: (row['NV']||'').toString().trim(),
+        cliente: (row['Cliente']||'').toString().trim(),
+        vendedor: (row['Vendedor']||'').toString().trim(),
+        guiaFolio: (row['Guia N']||'').toString().trim(),
+        factura: (row['Factura']||'').toString().trim(),
+        patente: (row['Patente']||'').toString().trim(),
+        retiradoPor: (row['Retirado Por']||'').toString().trim(),
+        operadorGrua: (row['Operador de Grua']||'').toString().trim(),
+        tipoReclamo: (row['Tipo de Reclamo']||'').toString().trim(),
+        motivo: (row['Observaciones']||'').toString().trim(),
+        estado: ESTADO_DESDE_TEXTO[(row['Estado']||'').toString().trim().toLowerCase()] || 'pendiente',
+        revisadoPor: (row['Revisado Por']||'').toString().trim() || null,
+        fechaRevision: parsearFechaHistorico(row['Fecha Revision']),
+        notaRevision: (row['Motivo Rechazo']||'').toString().trim(),
+        numeroNotaCredito: (row['N Solicitud NC']||'').toString().trim(),
+        numeroNC: (row['Numero de NC']||'').toString().trim(),
+        fechaCierre: parsearFechaHistorico(row['Fecha Cierre']),
+        usuarioCierre: (row['Usuario Cierre']||'').toString().trim() || null,
+        items: []
+      };
+      orden.push(num);
+    }
+    if(row['Codigo']){
+      porSolicitud[num].items.push({
+        codigo: (row['Codigo']||'').toString().trim(),
+        descripcion: (row['Descripcion']||'').toString().trim(),
+        cantidadDespachada: Number(row['Cantidad Despachada'])||0,
+        cantidad: Number(row['Cantidad Reclamada'])||0,
+        motivo: (row['Motivo Item']||'').toString().trim()
+      });
+    }
+  });
+  const nuevos = orden.map((num, i) => {
+    const g = porSolicitud[num];
+    return {
+      id: `hist_${Date.now()}_${i}_${Math.random().toString(36).slice(2,6)}`,
+      numero: g.numero, fecha: g.fecha, usuarioSolicitante: g.usuarioSolicitante,
+      nv: g.nv, cliente: g.cliente, vendedor: g.vendedor,
+      guiaFolio: g.guiaFolio, factura: g.factura, patente: g.patente, retiradoPor: g.retiradoPor, operadorGrua: g.operadorGrua,
+      items: g.items, tipoReclamo: g.tipoReclamo, motivo: g.motivo, archivos: [], posibleDuplicado:false,
+      estado: g.estado, revisadoPor: g.revisadoPor, fechaRevision: g.fechaRevision, notaRevision: g.notaRevision,
+      numeroNotaCredito: g.numeroNotaCredito, numeroNC: g.numeroNC, fechaCierre: g.fechaCierre, usuarioCierre: g.usuarioCierre,
+      incompleta:false, comentarioIncompleta:'',
+      eventos: [{ tipo:'creada', usuario: g.usuarioSolicitante, fecha: g.fecha, comentario:'Importado desde histórico' }]
+    };
+  });
+  let subidas = 0;
+  for(let i=0;i<nuevos.length;i+=450){
+    const lote = nuevos.slice(i,i+450);
+    try{
+      const batch = db.batch();
+      lote.forEach(r => batch.set(db.collection('reclamos').doc(r.id), r));
+      await batch.commit();
+      subidas += lote.length;
+    }catch(e){
+      console.warn('No se pudo subir un lote del histórico:', e);
+      reclamosPostventa.push(...nuevos.slice(0, subidas)); // deja en local lo que sí se guardó
+      renderPendientes(); renderRevision(); renderHistorial();
+      return { ok:false, subidas, total:nuevos.length, solicitudes:orden.length, error:e.message };
+    }
+  }
+  reclamosPostventa.push(...nuevos);
+  renderPendientes(); renderRevision(); renderHistorial();
+  return { ok:true, subidas, total:nuevos.length, solicitudes:orden.length, error:null };
 }
 
 // ==================== Usuarios (admin) ====================
