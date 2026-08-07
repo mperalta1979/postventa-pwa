@@ -179,26 +179,31 @@
 
       <div class="panel">
         <h2>Por Vendedor</h2>
+        <p class="hint">Todas las solicitudes, de cualquier estado.</p>
         <div class="dash-chart-row" id="dashChartVendedor"></div>
       </div>
 
       <div class="panel">
         <h2>Por Cliente</h2>
+        <p class="hint">Todas las solicitudes, de cualquier estado.</p>
         <div class="dash-chart-row" id="dashChartCliente"></div>
       </div>
 
       <div class="panel">
         <h2>Por Operador de Grúa</h2>
+        <p class="hint">Todas las solicitudes, de cualquier estado.</p>
         <div class="dash-chart-row" id="dashChartOperador"></div>
       </div>
 
       <div class="panel">
         <h2>Por Motivo</h2>
+        <p class="hint">Todas las solicitudes, de cualquier estado.</p>
         <div class="dash-chart-row" id="dashChartMotivo"></div>
       </div>
 
       <div class="panel">
         <h2>Por Tipo de Reclamo</h2>
+        <p class="hint">Todas las solicitudes, de cualquier estado.</p>
         <div class="dash-chart-row" id="dashChartTipo"></div>
       </div>
 
@@ -1755,11 +1760,11 @@ function renderDashboard(){
   `;
 
   renderDonutBloque('dashChartGeneral', {Pendientes:pendCount, 'En Revisión':revCount}, ['#b8860b','#1f3864']);
-  renderDonutBloque('dashChartVendedor', dashContarPor(activos,'vendedor'));
-  renderDonutBloque('dashChartCliente', dashContarPor(activos,'cliente'));
-  renderDonutBloque('dashChartOperador', dashContarPor(activos,'operadorGrua'));
-  renderDonutBloque('dashChartMotivo', dashContarPorMotivo(activos));
-  renderDonutBloque('dashChartTipo', dashContarPor(activos,'tipoReclamo'));
+  renderDonutBloque('dashChartVendedor', dashContarPor(visibles,'vendedor'));
+  renderDonutBloque('dashChartCliente', dashContarPor(visibles,'cliente'));
+  renderDonutBloque('dashChartOperador', dashContarPor(visibles,'operadorGrua'));
+  renderDonutBloque('dashChartMotivo', dashContarPorMotivo(visibles));
+  renderDonutBloque('dashChartTipo', dashContarPor(visibles,'tipoReclamo'));
 
   dashRenderEvolucionMensual(visibles);
   dashRenderRankingCodigos(visibles);
