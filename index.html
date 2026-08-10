@@ -595,7 +595,8 @@ const FACULTADES = [
   { id:'accesoMaestro', label:'Acceso al menú Maestro (Importar NV, Usuarios, Motivos, Tipos, Roles, Sincronización)' },
   { id:'verDashboard', label:'Ver el Dashboard' },
   { id:'consultaGuias', label:'Acceder a Consulta Guías (ver e imprimir el formato de guía)' },
-  { id:'controlCalidad', label:'Aprobar/Rechazar Control de Calidad por código, en En Revisión' }
+  { id:'controlCalidad', label:'Aprobar/Rechazar Control de Calidad por código, en En Revisión' },
+  { id:'ingresarFueraDePlazo', label:'Ingresar solicitudes con guía de más de 90 días (avisa al Admin y queda marcada)' }
 ];
 function facultadesEnBlanco(){
   const o = {}; FACULTADES.forEach(f => o[f.id] = false); return o;
@@ -909,6 +910,7 @@ function buscarUnificado(){
   if(reclamo){ verLineaDeTiempo(reclamo.id); return; }
   let guia = guiasDatos.find(g => String(g.folio)===valor || g.nv===valor || String(g.factura)===valor);
   if(guia && !tienePermiso('verTodasNV') && !nvPerteneceAMiVendedor(guia.vendedor)) guia = null;
+  if(guia && !tienePermiso('consultaGuias')) guia = null;
   if(guia){
     document.querySelector('[data-tab="consultaguias"]').click();
     document.getElementById('tipoBusquedaConsulta').value = String(guia.folio)===valor ? 'guia' : (guia.nv===valor ? 'nv' : 'factura');
@@ -1003,7 +1005,7 @@ function renderTodo(){
   renderNotifBadge();
 }
 // ==================== Notificaciones ====================
-const NOTIF_ICONO = { nueva_solicitud:'🆕', recibida:'📥', incompleta:'⚠️', completada:'✍️', rechazada:'❌' };
+const NOTIF_ICONO = { nueva_solicitud:'🆕', recibida:'📥', incompleta:'⚠️', completada:'✍️', rechazada:'❌', fuera_de_plazo:'⏰' };
 function notificacionesDe(usuario){
   return notificaciones.filter(n => n.para===usuario || (n.para==='ADMIN' && tienePermiso('verTodasSolicitudes')));
 }
@@ -1033,7 +1035,7 @@ function marcarNotificacionLeida(id){
 // Al hacer clic en una notificación, además de marcarla leída, te lleva
 // directo a la pestaña donde está esa solicitud (según el tipo de aviso) —
 // así no hay que ir a buscarla a mano.
-const NOTIF_DESTINO_TAB = { nueva_solicitud:'pendientes', incompleta:'pendientes', completada:'pendientes', recibida:'revision', rechazada:'historial' };
+const NOTIF_DESTINO_TAB = { nueva_solicitud:'pendientes', incompleta:'pendientes', completada:'pendientes', recibida:'revision', rechazada:'historial', fuera_de_plazo:'pendientes' };
 function irANotificacion(id){
   const n = notificaciones.find(x=>x.id===id); if(!n) return;
   marcarNotificacionLeida(id);
@@ -1167,14 +1169,18 @@ function diasDesdeFecha(fechaISO){
 function mostrarFormularioGuia(guia){
   const cont = document.getElementById('resultadoBusquedaNV');
   const dias = diasDesdeFecha(guia.fecha);
-  if(dias !== null && dias > PLAZO_LEGAL_DIAS){
+  const fueraDePlazo = dias !== null && dias > PLAZO_LEGAL_DIAS;
+  if(fueraDePlazo && !tienePermiso('ingresarFueraDePlazo')){
     cont.innerHTML = `<div class="panel" style="border-color:var(--alert);background:var(--alert-bg);margin-top:16px;">
       <p style="color:var(--alert);font-weight:600;margin:0;">Su solicitud esta fuera del plazo legal para ser realizada, por favor contacte a Sub Gerente de Administracion</p>
       <p class="small-note" style="margin-top:8px;">Guía N°: <strong>${guia.folio}</strong> · NV: <strong>${guia.nv||'-'}</strong> · Fecha de la guía: <strong>${new Date(guia.fecha).toLocaleDateString('es-CL')}</strong> (${dias} días corridos, plazo máximo ${PLAZO_LEGAL_DIAS})</p>
     </div>`;
     return;
   }
-  const encabezado = `<div class="small-note" style="margin-bottom:10px;line-height:1.6;">
+  const avisoFueraPlazo = fueraDePlazo ? `<div class="panel" style="border-color:var(--alert);background:var(--alert-bg);margin-bottom:12px;padding:10px 14px;">
+    <p style="color:var(--alert);font-weight:600;margin:0;">⏰ Esta guía tiene ${dias} días — supera el plazo legal de ${PLAZO_LEGAL_DIAS}. Puedes continuar, pero la solicitud va a quedar marcada y se le va a avisar al Admin.</p>
+  </div>` : '';
+  const encabezado = `${avisoFueraPlazo}<div class="small-note" style="margin-bottom:10px;line-height:1.6;">
     Guía N°: <strong>${guia.folio}</strong> · NV: <strong>${guia.nv||'-'}</strong> · Factura: <strong>${guia.factura||'-'}</strong><br>
     Cliente: <strong>${guia.cliente||'-'}</strong> · Vendedor: <strong>${guia.vendedor||'-'}</strong> · Fecha: <strong>${guia.fecha?new Date(guia.fecha).toLocaleDateString('es-CL'):'-'}</strong><br>
     Patente: <strong>${guia.patente||'-'}</strong> · Retirado por: <strong>${guia.retiradoPor||'-'}</strong> · Operador de Grúa: <strong>${guia.operadorGrua||'-'}</strong>
@@ -1319,7 +1325,8 @@ async function enviarSolicitud(){
   const status = document.getElementById('envioReclamoStatus');
   if(!ctx) return;
   const diasGuia = diasDesdeFecha(ctx.guia.fecha);
-  if(diasGuia !== null && diasGuia > PLAZO_LEGAL_DIAS){
+  const fueraDePlazo = diasGuia !== null && diasGuia > PLAZO_LEGAL_DIAS;
+  if(fueraDePlazo && !tienePermiso('ingresarFueraDePlazo')){
     status.textContent = 'Su solicitud esta fuera del plazo legal para ser realizada, por favor contacte a Sub Gerente de Administracion';
     return;
   }
@@ -1373,16 +1380,19 @@ async function enviarSolicitud(){
     usuarioSolicitante: usuarioActual,
     nv: ctx.nv, cliente: ctx.data.cliente||'', vendedor: ctx.data.vendedor||'',
     guiaFolio: ctx.guia.folio||'', factura: ctx.guia.factura||'', patente: ctx.guia.patente||'', retiradoPor: ctx.guia.retiradoPor||'', operadorGrua: ctx.guia.operadorGrua||'',
-    items, tipoReclamo, motivo: observaciones, archivos, posibleDuplicado,
+    items, tipoReclamo, motivo: observaciones, archivos, posibleDuplicado, fueraDePlazo,
     estado:'pendiente', revisadoPor:null, fechaRevision:null, notaRevision:'',
     numeroNotaCredito:'', numeroNC:'', fechaCierre:null, usuarioCierre:null,
-    eventos: [{ tipo:'creada', usuario: usuarioActual, fecha: new Date().toISOString(), comentario:'' }]
+    eventos: [{ tipo:'creada', usuario: usuarioActual, fecha: new Date().toISOString(), comentario: fueraDePlazo ? `Ingresada fuera del plazo legal (guía con ${diasGuia} días)` : '' }]
   };
   reclamosPostventa.push(nuevoReclamo);
   status.textContent = 'Guardando...';
   await dbGuardarReclamo(nuevoReclamo);
   await dbGuardarConfig();
   crearNotificacion('ADMIN', 'nueva_solicitud', `Nueva solicitud ${nuevoReclamo.numero} de ${usuarioActual} (NV ${nuevoReclamo.nv}).`, nuevoReclamo.id);
+  if(fueraDePlazo){
+    crearNotificacion('ADMIN', 'fuera_de_plazo', `⏰ ${usuarioActual} ingresó la solicitud ${nuevoReclamo.numero} (NV ${nuevoReclamo.nv}) con la guía fuera del plazo legal — tiene ${diasGuia} días (máximo ${PLAZO_LEGAL_DIAS}).`, nuevoReclamo.id);
+  }
   document.getElementById('resultadoBusquedaNV').innerHTML = '';
   document.getElementById('buscarNVInput').value = '';
   renderPendientes();
@@ -1436,7 +1446,7 @@ function renderTarjetaReclamo(r, contexto){
   return `<div id="tarjeta_${r.id}" style="border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:12px;">
     <div class="row" style="justify-content:space-between;flex-wrap:wrap;">
       <div>
-        <strong style="color:var(--navy);">${r.numero}</strong> <span class="pill ${ESTADO_RECLAMO_PILL[r.estado]}">${etiquetaEstado(r.estado)}</span>${r.posibleDuplicado ? ` <span class="pill alert">⚠️ Posible duplicado (NV/Guía/Factura)</span>` : ''}${r.incompleta ? ` <span class="pill warn">⚠️ Incompleta</span>` : ''}${badgeDias}
+        <strong style="color:var(--navy);">${r.numero}</strong> <span class="pill ${ESTADO_RECLAMO_PILL[r.estado]}">${etiquetaEstado(r.estado)}</span>${r.posibleDuplicado ? ` <span class="pill alert">⚠️ Posible duplicado (NV/Guía/Factura)</span>` : ''}${r.incompleta ? ` <span class="pill warn">⚠️ Incompleta</span>` : ''}${r.fueraDePlazo ? ` <span class="pill alert">⏰ Fuera de plazo (90 días)</span>` : ''}${badgeDias}
         <div class="small-note">NV ${r.nv} · Guía N°: ${r.guiaFolio||'-'} · Factura: ${r.factura||'-'} · Cliente: ${r.cliente||'-'}</div>
         <div class="small-note">Patente: ${r.patente||'-'} · Retirado por: ${r.retiradoPor||'-'} · Operador de Grúa: ${r.operadorGrua||'-'}</div>
         <div class="small-note">Solicitado por ${r.usuarioSolicitante} — ${new Date(r.fecha).toLocaleString('es-CL')}</div>
@@ -1567,7 +1577,7 @@ function renderHistorial(){
   if(!lista.length){ tbody.innerHTML=''; empty.style.display='block'; return; }
   empty.style.display = 'none';
   tbody.innerHTML = lista.map(r => `<tr id="filaHist_${r.id}">
-    <td data-etiqueta="N°">${r.numero}${r.posibleDuplicado ? ' ⚠️' : ''}</td><td data-etiqueta="Fecha">${new Date(r.fecha).toLocaleDateString('es-CL')}</td><td data-etiqueta="NV">${r.nv}</td><td data-etiqueta="Guía">${r.guiaFolio||'-'}</td>
+    <td data-etiqueta="N°">${r.numero}${r.posibleDuplicado ? ' ⚠️' : ''}${r.fueraDePlazo ? ' ⏰' : ''}</td><td data-etiqueta="Fecha">${new Date(r.fecha).toLocaleDateString('es-CL')}</td><td data-etiqueta="NV">${r.nv}</td><td data-etiqueta="Guía">${r.guiaFolio||'-'}</td>
     <td data-etiqueta="Cliente">${r.cliente||'-'}</td><td data-etiqueta="Solicitante">${r.usuarioSolicitante}</td><td data-etiqueta="Tipo">${TIPO_RECLAMO_LABEL[r.tipoReclamo] || r.tipoReclamo}</td>
     <td data-etiqueta="Estado"><span class="pill ${ESTADO_RECLAMO_PILL[r.estado]}">${etiquetaEstado(r.estado)}</span></td>
     <td data-etiqueta="Motivo Rechazo">${r.estado==='rechazado' ? (r.notaRevision||'-') : '-'}</td>
