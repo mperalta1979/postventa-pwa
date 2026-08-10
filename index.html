@@ -951,6 +951,9 @@ function entrarApp(){
   document.getElementById('hintBuscarNV').textContent = tienePermiso('verTodasNV')
     ? 'Busca por N° de Guía, N° de NV o N° de Factura — puedes ver cualquier documento.'
     : `Busca por N° de Guía, N° de NV o N° de Factura — solo puedes ver documentos de tu propio vendedor (${miVendedor()||'sin asignar'}).`;
+  document.getElementById('buscadorGlobalInput').placeholder = tienePermiso('consultaGuias')
+    ? 'Buscar N° Solicitud, Guía, NV o Factura...'
+    : 'Buscar N° de Solicitud...';
   document.querySelector('[data-tab="nueva"]').click();
   renderTodo();
   mostrarTourSiCorresponde();
