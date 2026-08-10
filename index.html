@@ -7,6 +7,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
 <style>
   :root{
     --bg-celeste:#eaf4fb;
@@ -133,6 +134,7 @@
       <div class="sub">Petroflex S.A.</div>
     </div>
     <div class="userbox">
+      <button class="btn secondary" id="btnActualizarCatalogos" title="Trae la última versión de Guías y Clientes cargados (por si el Admin importó algo nuevo mientras estabas conectado)">🔄 Actualizar guías/clientes</button>
       <div style="position:relative;">
         <button class="btn secondary" id="btnNotificaciones" title="Notificaciones">🔔<span id="notifBadge" class="pill alert" style="display:none;margin-left:4px;padding:1px 6px;"></span></button>
         <div id="notifPanel" style="display:none;position:absolute;right:0;top:calc(100% + 6px);width:340px;max-height:420px;overflow-y:auto;background:#fff;border:1px solid var(--border);border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.15);z-index:80;padding:6px;"></div>
@@ -683,15 +685,24 @@ function crearNotificacion(para, tipo, mensaje, reclamoId){
 // y en el refresco periódico. No hace falta "mezclar": cada documento es
 // dueño de sus propios datos, así que la última versión guardada siempre es
 // la correcta.
-async function dbCargarTodo(){
+// Trae los datos "vivos" siempre (config, reclamos, notificaciones). Los
+// catálogos grandes (guías, clientes) solo se piden cuando incluirCatalogos
+// es true — normalmente una vez, al iniciar sesión — porque son miles de
+// documentos cada uno y casi no cambian minuto a minuto (solo cuando el
+// Admin hace una carga nueva). Volver a pedirlos cada 30 segundos, para
+// cada persona conectada, agotaba la cuota gratuita de lecturas de
+// Firestore en minutos.
+async function dbCargarTodo(incluirCatalogos){
   try{
-    const [configSnap, guiasSnap, reclamosSnap, notifSnap, clientesSnap] = await Promise.all([
+    const promesas = [
       db.collection('postventa').doc('config').get(),
-      db.collection('guias').get(),
       db.collection('reclamos').get(),
-      db.collection('notificaciones').get(),
-      db.collection('clientes').get()
-    ]);
+      db.collection('notificaciones').get()
+    ];
+    if(incluirCatalogos){
+      promesas.push(db.collection('guias').get(), db.collection('clientes').get());
+    }
+    const [configSnap, reclamosSnap, notifSnap, guiasSnap, clientesSnap] = await Promise.all(promesas);
     if(configSnap.exists){
       const data = configSnap.data();
       if(data.cuentas) cuentas = data.cuentas;
@@ -713,11 +724,13 @@ async function dbCargarTodo(){
         });
       });
     }
-    guiasDatos = guiasSnap.docs.map(d => d.data());
     reclamosPostventa = reclamosSnap.docs.map(d => d.data());
     notificaciones = notifSnap.docs.map(d => d.data());
-    clientesDatos = {};
-    clientesSnap.docs.forEach(d => { const c = d.data(); clientesDatos[c.codAux] = c; });
+    if(incluirCatalogos){
+      guiasDatos = guiasSnap.docs.map(d => d.data());
+      clientesDatos = {};
+      clientesSnap.docs.forEach(d => { const c = d.data(); clientesDatos[c.codAux] = c; });
+    }
     return true;
   }catch(e){ console.warn('No se pudo cargar datos de Firestore:', e); return false; }
 }
@@ -727,7 +740,7 @@ async function dbCargarTodo(){
 // escribiendo. Se sigue trayendo la info fresca igual, solo se posterga
 // el repintado hasta que cierre el formulario.
 let edicionInlineAbierta = false;
-setInterval(async () => { if(usuarioActual){ await dbCargarTodo(); if(!edicionInlineAbierta) renderTodo(); renderNotifBadge(); } }, 30000);
+setInterval(async () => { if(usuarioActual){ await dbCargarTodo(false); if(!edicionInlineAbierta) renderTodo(); renderNotifBadge(); } }, 30000);
 
 // ==================== Migración única desde jsonbin ====================
 // Trae lo que estaba guardado en el sistema anterior y lo sube a Firestore
@@ -826,6 +839,16 @@ document.getElementById('btnCerrarSesion').addEventListener('click', () => {
   document.getElementById('loginScreen').style.display = 'flex';
   document.getElementById('loginUsuario').value = '';
   document.getElementById('loginClave').value = '';
+});
+document.getElementById('btnActualizarCatalogos').addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  const textoOriginal = btn.textContent;
+  btn.textContent = 'Actualizando...';
+  btn.disabled = true;
+  await dbCargarTodo(true);
+  if(!edicionInlineAbierta) renderTodo();
+  btn.textContent = textoOriginal;
+  btn.disabled = false;
 });
 function entrarApp(){
   document.getElementById('loginScreen').style.display = 'none';
@@ -2683,7 +2706,22 @@ async function sembrarCuentasVendedores(){
   if(huboCambios) await dbGuardarConfig();
 }
 (async function init(){
-  await dbCargarTodo();
+  // Con las reglas de seguridad definitivas, Firestore exige que la
+  // solicitud venga de alguien "autenticado" — se usa el inicio de sesión
+  // anónimo de Firebase para eso, que es invisible para el usuario (nada
+  // que ver con el usuario/clave propio de esta app, que sigue igual).
+  try{
+    await firebase.auth().signInAnonymously();
+  }catch(e){
+    console.error('No se pudo iniciar sesión anónima en Firebase:', e);
+    document.body.innerHTML = `<div style="max-width:560px;margin:60px auto;padding:24px;font-family:Arial,sans-serif;text-align:center;border:1px solid #eee;border-radius:10px;">
+      <h2 style="color:#c81e1e;">No se pudo conectar con Firebase</h2>
+      <p>Revisa en la consola de Firebase que <strong>Authentication → Sign-in method → Anonymous</strong> esté habilitado.</p>
+      <p style="color:#900;font-size:.85rem;">${e.message}</p>
+    </div>`;
+    return;
+  }
+  await dbCargarTodo(true);
   await bootstrapAdmin();
   await sembrarCuentasVendedores();
   await sembrarMotivosPorDefecto();
