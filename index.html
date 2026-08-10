@@ -34,10 +34,10 @@
   nav#tabs button{background:none;border:none;color:#cddcee;padding:12px 16px;cursor:pointer;font-size:.88rem;border-bottom:3px solid transparent;}
   nav#tabs button:hover{color:#fff;}
   nav#tabs button.active{color:#fff;border-bottom-color:#5b9bd5;font-weight:600;}
-  nav#subnavMaestro{display:flex;flex-wrap:wrap;padding:0 20px;}
-  nav#subnavMaestro button{background:none;border:none;color:#aebedb;padding:9px 16px;cursor:pointer;font-size:.82rem;border-bottom:3px solid transparent;}
-  nav#subnavMaestro button:hover{color:#fff;}
-  nav#subnavMaestro button.active{color:#fff;border-bottom-color:#5b9bd5;font-weight:600;}
+  nav#subnavMaestro, nav#subnavSolicitudes{display:flex;flex-wrap:wrap;padding:0 20px;}
+  nav#subnavMaestro button, nav#subnavSolicitudes button{background:none;border:none;color:#aebedb;padding:9px 16px;cursor:pointer;font-size:.82rem;border-bottom:3px solid transparent;}
+  nav#subnavMaestro button:hover, nav#subnavSolicitudes button:hover{color:#fff;}
+  nav#subnavMaestro button.active, nav#subnavSolicitudes button.active{color:#fff;border-bottom-color:#5b9bd5;font-weight:600;}
   main{max-width:1200px;margin:20px auto;padding:0 16px 60px;}
   .tab{display:none;}
   .panel{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:18px 22px;margin-bottom:18px;}
@@ -65,6 +65,10 @@
   .pill.alert{background:var(--alert-bg);color:var(--alert);}
   .small-note{font-size:.78rem;color:var(--muted);margin-top:4px;}
   .empty{text-align:center;padding:36px 10px;color:var(--muted);}
+  .toast-exito{position:fixed;top:20px;left:50%;transform:translateX(-50%) scale(.85);background:#fff;border:1px solid var(--ok);border-radius:12px;padding:14px 22px;box-shadow:0 8px 24px rgba(0,0,0,.18);display:flex;align-items:center;gap:10px;z-index:300;opacity:0;pointer-events:none;transition:opacity .25s ease, transform .25s ease;font-size:.92rem;color:var(--text);}
+  .toast-exito.mostrar{opacity:1;transform:translateX(-50%) scale(1);}
+  .toast-exito .check{font-size:1.5rem;animation:popCheck .5s ease;}
+  @keyframes popCheck{0%{transform:scale(0);}60%{transform:scale(1.35);}100%{transform:scale(1);}}
   .empty .big{font-size:2.2rem;margin-bottom:6px;}
   .pwd-wrap{position:relative;display:inline-block;}
   .pwd-wrap input{padding-right:36px;}
@@ -103,6 +107,30 @@
   .timeline-item .titulo{font-weight:600;color:var(--navy);font-size:.88rem;}
   .timeline-item .meta{font-size:.75rem;color:var(--muted);margin-top:1px;}
   .timeline-item .comentario{font-size:.82rem;margin-top:3px;}
+
+  /* ---- Vista para celular ---- */
+  @media (max-width: 720px){
+    header{padding:10px 14px;}
+    header h1{font-size:1.15rem;}
+    .userbox{width:100%;justify-content:flex-start;}
+    #buscadorGlobalInput{width:150px;}
+    nav#tabs, nav#subnavMaestro, nav#subnavSolicitudes{padding:0 8px;}
+    nav#tabs button, nav#subnavMaestro button, nav#subnavSolicitudes button{padding:9px 10px;font-size:.78rem;}
+    main{padding:12px !important;}
+    .panel{padding:14px !important;}
+    .dash-chart-row{gap:12px;}
+    .dash-chart-row svg{width:150px !important;height:150px !important;}
+    #dashReconocimiento > div{grid-template-columns:1fr !important;}
+    .row{gap:8px;}
+    .stat-grid{grid-template-columns:repeat(2,1fr) !important;}
+    /* Historial: la tabla ancha se convierte en tarjetas apiladas */
+    #tab-historial table thead{display:none;}
+    #tab-historial table, #tab-historial table tbody, #tab-historial table tr, #tab-historial table td{display:block;width:100%;}
+    #tab-historial table tr{border:1px solid var(--border);border-radius:10px;margin-bottom:10px;padding:8px 10px;}
+    #tab-historial table td{border:none;padding:4px 0;text-align:left !important;}
+    #tab-historial table td:empty{display:none;}
+    #tab-historial table td::before{content:attr(data-etiqueta);display:block;font-size:.68rem;color:var(--muted);font-weight:600;text-transform:uppercase;}
+  }
 </style>
 </head>
 <body>
@@ -134,6 +162,11 @@
       <div class="sub">Petroflex S.A.</div>
     </div>
     <div class="userbox">
+      <div style="position:relative;">
+        <input type="text" id="buscadorGlobalInput" placeholder="Buscar N° Solicitud, Guía, NV o Factura..." style="width:220px;">
+        <button class="btn secondary" id="btnBuscadorGlobal" title="Busca en todo: si es una solicitud te lleva a su línea de tiempo, si es una guía/NV/factura te lleva a Consulta Guías">🔍</button>
+        <div id="buscadorGlobalMsg" style="display:none;position:absolute;left:0;top:calc(100% + 6px);width:280px;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.15);z-index:80;padding:10px;font-size:.82rem;color:var(--text);"></div>
+      </div>
       <button class="btn secondary" id="btnActualizarCatalogos" title="Trae la última versión de Guías y Clientes cargados (por si el Admin importó algo nuevo mientras estabas conectado)">🔄 Actualizar guías/clientes</button>
       <div style="position:relative;">
         <button class="btn secondary" id="btnNotificaciones" title="Notificaciones">🔔<span id="notifBadge" class="pill alert" style="display:none;margin-left:4px;padding:1px 6px;"></span></button>
@@ -146,13 +179,16 @@
 
   <nav id="tabs">
     <button id="navDashboard" data-tab="dashboard">Dashboard</button>
+    <button id="navSolicitudes">Solicitudes ▾</button>
+    <button id="navConsultaGuias" data-tab="consultaguias">Consulta Guías</button>
+    <button id="navMaestro" class="admin-only" style="display:none;">Maestro ▾</button>
+  </nav>
+  <nav id="subnavSolicitudes" style="display:none;background:var(--navy-dark);">
     <button data-tab="nueva" class="active">Nueva Solicitud</button>
     <button data-tab="pendientes">Solicitudes Pendientes</button>
     <button data-tab="revision">En Revisión</button>
     <button data-tab="historial">Historial</button>
-    <button id="navConsultaGuias" data-tab="consultaguias">Consulta Guías</button>
     <button data-tab="lineatiempo">Línea de Tiempo</button>
-    <button id="navMaestro" class="admin-only" style="display:none;">Maestro ▾</button>
   </nav>
   <nav id="subnavMaestro" style="display:none;background:var(--navy-dark);">
     <button data-tab="importar">Importar NV</button>
@@ -225,6 +261,12 @@
           </table>
         </div>
       </div>
+
+      <div class="panel" id="panelReconocimiento" style="display:none;">
+        <h2>🏆 Reconocimiento</h2>
+        <p class="hint">Solo visible para Admin.</p>
+        <div id="dashReconocimiento"></div>
+      </div>
     </section>
 
     <!-- CONSULTA GUÍAS -->
@@ -241,7 +283,7 @@
           <input type="text" id="buscarConsultaInput" placeholder="Ingresa el número...">
           <button class="btn" id="btnBuscarConsulta">Buscar</button>
         </div>
-        <div id="resultadoConsultaGuia" style="margin-top:16px;"></div>
+        <div id="resultadoConsultaGuia" style="margin-top:16px;" class="empty"><div class="big">🧾</div>Busca una guía arriba para ver su formato completo.</div>
       </div>
     </section>
 
@@ -262,7 +304,7 @@
           <button class="btn secondary" id="btnLimpiarTiempo" type="button">Limpiar</button>
         </div>
         <div id="resultadoBusquedaTiempo" style="margin-top:16px;"></div>
-        <div id="vistaLineaTiempo" style="margin-top:16px;"></div>
+        <div id="vistaLineaTiempo" style="margin-top:16px;" class="empty"><div class="big">🕒</div>Busca una solicitud arriba para ver su avance paso a paso.</div>
       </div>
     </section>
 
@@ -291,7 +333,7 @@
         <h2>Solicitudes Pendientes</h2>
         <p class="hint">Reclamos recién enviados, esperando aprobación o rechazo.</p>
         <div id="listaPendientes"></div>
-        <div id="emptyPendientes" class="empty"><div class="big">📭</div>No hay solicitudes pendientes.</div>
+        <div id="emptyPendientes" class="empty"><div class="big">📭</div>No hay solicitudes pendientes — todo al día por aquí.</div>
       </div>
     </section>
 
@@ -301,7 +343,7 @@
         <h2>Postventa — En Revisión</h2>
         <p class="hint">Reclamos ya aprobados: revisa el caso, deja tus conclusiones y cierra ingresando el N° de Solicitud de Nota de Crédito.</p>
         <div id="listaRevision"></div>
-        <div id="emptyRevision" class="empty"><div class="big">🔎</div>No hay casos en revisión.</div>
+        <div id="emptyRevision" class="empty"><div class="big">🔎</div>No hay casos en revisión por ahora.</div>
       </div>
     </section>
 
@@ -323,7 +365,7 @@
             <tbody id="tbodyHistorial"></tbody>
           </table>
         </div>
-        <div id="emptyHistorial" class="empty"><div class="big">🗂️</div>Sin solicitudes resueltas todavía.</div>
+        <div id="emptyHistorial" class="empty"><div class="big">🗂️</div>Todavía no hay solicitudes resueltas — cuando cierres la primera, va a aparecer aquí.</div>
       </div>
     </section>
 
@@ -467,6 +509,17 @@
   </main>
 </div>
 
+<div id="tourOverlay" style="display:none;position:fixed;inset:0;background:rgba(15,30,55,.6);z-index:500;align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:14px;max-width:440px;width:90%;padding:28px;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,.3);">
+    <div id="tourPaso"></div>
+    <div class="row" style="justify-content:center;margin-top:18px;gap:10px;">
+      <button class="btn secondary" id="btnTourAnterior">Anterior</button>
+      <button class="btn secondary" id="btnTourSaltar">Saltar</button>
+      <button class="btn" id="btnTourSiguiente">Siguiente</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ==================== Estado ====================
 let cuentas = {}; // usuario -> {passwordHash, rol:'admin'|'vendedor', vendedorAsociado}
@@ -508,6 +561,8 @@ const CUENTAS_SEMILLA_VENDEDORES = {"GYAÑEZ": {"passwordHash": "1868d7a53f215e9
 const TIPO_RECLAMO_LABEL = { calidad:'Calidad', falta_material:'Falta de material', otro:'Otro' };
 const ESTADO_RECLAMO_LABEL = { pendiente:'Pendiente', aprobado:'Aprobado — en revisión', rechazado:'Rechazado', cerrado:'Cerrado' };
 const ESTADO_RECLAMO_PILL = { pendiente:'warn', aprobado:'', rechazado:'alert', cerrado:'ok' };
+const ESTADO_RECLAMO_ICONO = { pendiente:'⏳', aprobado:'🔎', rechazado:'✖', cerrado:'✔' };
+function etiquetaEstado(estado){ return `${ESTADO_RECLAMO_ICONO[estado]||''} ${ESTADO_RECLAMO_LABEL[estado]||estado}`; }
 
 // ==================== Utilidades ====================
 async function hashPassword(pw){
@@ -840,6 +895,36 @@ document.getElementById('btnCerrarSesion').addEventListener('click', () => {
   document.getElementById('loginUsuario').value = '';
   document.getElementById('loginClave').value = '';
 });
+// ==================== Buscador único (header) ====================
+// Detecta solo si lo que escribiste es un N° de Solicitud (te lleva a su
+// Línea de Tiempo) o una Guía/NV/Factura (te lleva a Consulta Guías con la
+// búsqueda ya hecha) — para no tener que pensar en cuál de las 3 pantallas
+// de búsqueda usar cada vez.
+function buscarUnificado(){
+  const valor = document.getElementById('buscadorGlobalInput').value.trim();
+  const msg = document.getElementById('buscadorGlobalMsg');
+  msg.style.display = 'none';
+  if(!valor) return;
+  const reclamo = reclamosPostventa.find(r => puedeVerReclamo(r) && r.numero && r.numero.toLowerCase()===valor.toLowerCase());
+  if(reclamo){ verLineaDeTiempo(reclamo.id); return; }
+  let guia = guiasDatos.find(g => String(g.folio)===valor || g.nv===valor || String(g.factura)===valor);
+  if(guia && !tienePermiso('verTodasNV') && !nvPerteneceAMiVendedor(guia.vendedor)) guia = null;
+  if(guia){
+    document.querySelector('[data-tab="consultaguias"]').click();
+    document.getElementById('tipoBusquedaConsulta').value = String(guia.folio)===valor ? 'guia' : (guia.nv===valor ? 'nv' : 'factura');
+    document.getElementById('buscarConsultaInput').value = valor;
+    buscarConsultaGuia();
+    return;
+  }
+  msg.innerHTML = `No se encontró nada con "<strong>${valor}</strong>". Si estás por crear una solicitud nueva, prueba en <strong>Solicitudes ▾ → Nueva Solicitud</strong>.`;
+  msg.style.display = 'block';
+}
+document.getElementById('btnBuscadorGlobal').addEventListener('click', buscarUnificado);
+document.getElementById('buscadorGlobalInput').addEventListener('keydown', (e) => { if(e.key==='Enter') buscarUnificado(); });
+document.addEventListener('click', (e) => {
+  const msg = document.getElementById('buscadorGlobalMsg');
+  if(msg.style.display==='block' && e.target.id!=='buscadorGlobalInput' && e.target.id!=='btnBuscadorGlobal' && !msg.contains(e.target)) msg.style.display = 'none';
+});
 document.getElementById('btnActualizarCatalogos').addEventListener('click', async (e) => {
   const btn = e.currentTarget;
   const textoOriginal = btn.textContent;
@@ -864,9 +949,46 @@ function entrarApp(){
   document.getElementById('hintBuscarNV').textContent = tienePermiso('verTodasNV')
     ? 'Busca por N° de Guía, N° de NV o N° de Factura — puedes ver cualquier documento.'
     : `Busca por N° de Guía, N° de NV o N° de Factura — solo puedes ver documentos de tu propio vendedor (${miVendedor()||'sin asignar'}).`;
-  document.querySelector('#tabs button[data-tab="nueva"]').click();
+  document.querySelector('[data-tab="nueva"]').click();
   renderTodo();
+  mostrarTourSiCorresponde();
 }
+// ==================== Recorrido de bienvenida (primera vez) ====================
+const TOUR_PASOS = [
+  { icono:'👋', titulo:'¡Bienvenido a Post Venta PWA!', texto:'Un recorrido rápido antes de empezar — toma 30 segundos.' },
+  { icono:'📝', titulo:'Nueva Solicitud', texto:'Busca la Guía, NV o Factura del cliente, marca los códigos con problema, y envía — queda en "Solicitudes ▾ → Pendientes" esperando revisión.' },
+  { icono:'🔍', titulo:'Buscador de arriba', texto:'Escribe cualquier N° de Solicitud, Guía, NV o Factura ahí arriba a la izquierda y te lleva directo a lo que buscas.' },
+  { icono:'🔔', titulo:'Notificaciones', texto:'La campanita te avisa cuando tu solicitud es recibida, queda incompleta, o es rechazada — haz clic en el aviso para ir directo a ella.' },
+  { icono:'🕒', titulo:'Línea de Tiempo', texto:'En "Solicitudes ▾ → Línea de Tiempo" puedes revisar el avance paso a paso de cualquier solicitud tuya.' }
+];
+let tourIndice = 0;
+function renderPasoTour(){
+  const p = TOUR_PASOS[tourIndice];
+  document.getElementById('tourPaso').innerHTML = `
+    <div style="font-size:2.4rem;">${p.icono}</div>
+    <h3 style="color:var(--navy);margin:10px 0 6px;">${p.titulo}</h3>
+    <p style="color:var(--text);font-size:.92rem;">${p.texto}</p>
+    <div class="small-note" style="margin-top:10px;">${tourIndice+1} de ${TOUR_PASOS.length}</div>`;
+  document.getElementById('btnTourAnterior').style.visibility = tourIndice===0 ? 'hidden' : 'visible';
+  document.getElementById('btnTourSiguiente').textContent = tourIndice===TOUR_PASOS.length-1 ? 'Listo' : 'Siguiente';
+}
+function cerrarTour(){
+  document.getElementById('tourOverlay').style.display = 'none';
+  try{ localStorage.setItem('postventa_tour_visto_'+usuarioActual, '1'); }catch(e){}
+}
+function mostrarTourSiCorresponde(){
+  let visto = false;
+  try{ visto = localStorage.getItem('postventa_tour_visto_'+usuarioActual) === '1'; }catch(e){}
+  if(visto) return;
+  tourIndice = 0;
+  renderPasoTour();
+  document.getElementById('tourOverlay').style.display = 'flex';
+}
+document.getElementById('btnTourSiguiente').addEventListener('click', () => {
+  if(tourIndice < TOUR_PASOS.length-1){ tourIndice++; renderPasoTour(); } else cerrarTour();
+});
+document.getElementById('btnTourAnterior').addEventListener('click', () => { if(tourIndice>0){ tourIndice--; renderPasoTour(); } });
+document.getElementById('btnTourSaltar').addEventListener('click', cerrarTour);
 function renderTodo(){
   renderPendientes();
   renderRevision();
@@ -917,7 +1039,7 @@ function irANotificacion(id){
   marcarNotificacionLeida(id);
   document.getElementById('notifPanel').style.display = 'none';
   const destino = NOTIF_DESTINO_TAB[n.tipo];
-  if(destino) document.querySelector(`#tabs button[data-tab="${destino}"]`).click();
+  if(destino) document.querySelector(`[data-tab="${destino}"]`).click();
 }
 document.getElementById('btnNotificaciones').addEventListener('click', (e) => {
   e.stopPropagation();
@@ -932,14 +1054,18 @@ document.addEventListener('click', (e) => {
 });
 
 // ==================== Navegación ====================
-document.querySelectorAll('#tabs button[data-tab], #subnavMaestro button[data-tab]').forEach(btn => {
+document.querySelectorAll('#tabs button[data-tab], #subnavMaestro button[data-tab], #subnavSolicitudes button[data-tab]').forEach(btn => {
   btn.addEventListener('click', () => {
-    // Si el botón vive dentro del submenú Maestro, ese se mantiene abierto;
-    // si es una pestaña normal, el submenú se cierra (si no, quedaba pegado
-    // en pantalla al cambiarse a otra pestaña como "Nueva Solicitud").
-    const vieneDeMaestro = !!btn.closest('#subnavMaestro');
-    if(!vieneDeMaestro) document.getElementById('subnavMaestro').style.display = 'none';
-    document.querySelectorAll('#tabs button, #subnavMaestro button').forEach(b=>b.classList.remove('active'));
+    // Si el botón vive dentro de un submenú (Maestro o Solicitudes), ese
+    // se mantiene abierto; si es una pestaña de primer nivel, ambos
+    // submenús se cierran (si no, quedaban pegados en pantalla al
+    // cambiarse a otra pestaña como "Dashboard").
+    const vieneDeSubmenu = !!(btn.closest('#subnavMaestro') || btn.closest('#subnavSolicitudes'));
+    if(!vieneDeSubmenu){
+      document.getElementById('subnavMaestro').style.display = 'none';
+      document.getElementById('subnavSolicitudes').style.display = 'none';
+    }
+    document.querySelectorAll('#tabs button, #subnavMaestro button, #subnavSolicitudes button').forEach(b=>b.classList.remove('active'));
     btn.classList.add('active');
     document.querySelectorAll('.tab').forEach(t=>t.style.display='none');
     document.getElementById('tab-'+btn.dataset.tab).style.display='block';
@@ -947,17 +1073,28 @@ document.querySelectorAll('#tabs button[data-tab], #subnavMaestro button[data-ta
     if(btn.dataset.tab==='tiposreclamo') renderTiposReclamo();
     if(btn.dataset.tab==='roles') renderRoles();
     if(btn.dataset.tab==='dashboard') renderDashboard();
-    if(SECCIONES_MAESTRO.includes(btn.dataset.tab)) document.getElementById('navMaestro').classList.add('active');
-    else document.getElementById('navMaestro').classList.remove('active');
+    document.getElementById('navMaestro').classList.toggle('active', SECCIONES_MAESTRO.includes(btn.dataset.tab));
+    document.getElementById('navSolicitudes').classList.toggle('active', SECCIONES_SOLICITUDES.includes(btn.dataset.tab));
   });
 });
 const SECCIONES_MAESTRO = ['importar','historico','usuarios','roles','motivos','tiposreclamo','config'];
+const SECCIONES_SOLICITUDES = ['nueva','pendientes','revision','historial','lineatiempo'];
 document.getElementById('navMaestro').addEventListener('click', () => {
   const sub = document.getElementById('subnavMaestro');
   const abrir = sub.style.display === 'none';
+  document.getElementById('subnavSolicitudes').style.display = 'none';
   sub.style.display = abrir ? 'flex' : 'none';
   if(abrir && !document.querySelector('#subnavMaestro button.active')){
     document.querySelector('#subnavMaestro button[data-tab="importar"]').click();
+  }
+});
+document.getElementById('navSolicitudes').addEventListener('click', () => {
+  const sub = document.getElementById('subnavSolicitudes');
+  const abrir = sub.style.display === 'none';
+  document.getElementById('subnavMaestro').style.display = 'none';
+  sub.style.display = abrir ? 'flex' : 'none';
+  if(abrir && !document.querySelector('#subnavSolicitudes button.active')){
+    document.querySelector('#subnavSolicitudes button[data-tab="nueva"]').click();
   }
 });
 
@@ -1152,10 +1289,16 @@ async function subirAdjuntoSiCorresponde(archivo){
   if(!archivo) return null;
   if(!CLOUDINARY_CLOUD_NAME || !CLOUDINARY_UPLOAD_PRESET) return archivo;
   try{
+    // Las imágenes van como "image"; PDF/Excel/CSV van como "raw" — Cloudinary
+    // bloquea por defecto la entrega de PDF subidos como imagen (medida de
+    // seguridad de ellos), así que para documentos que no son imagen se evita
+    // esa vía por completo.
+    const esImagen = archivo.tipo && archivo.tipo.startsWith('image/');
+    const tipoRecurso = esImagen ? 'image' : 'raw';
     const form = new FormData();
     form.append('file', archivo.dataUrl);
     form.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
-    const resp = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/auto/upload`, { method:'POST', body: form });
+    const resp = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/${tipoRecurso}/upload`, { method:'POST', body: form });
     const data = await resp.json();
     if(data.secure_url) return { nombre: archivo.nombre, tipo: archivo.tipo, url: data.secure_url };
     throw new Error(data.error?.message || 'Cloudinary: error desconocido');
@@ -1279,12 +1422,12 @@ function renderTarjetaReclamo(r, contexto){
       </div>
       <div class="row" style="margin-top:8px;gap:10px;align-items:end;">
         <div>
-          <label class="hint" style="display:block;margin-bottom:3px;">N° de Solicitud de Nota de Crédito</label>
-          <input type="text" id="ncInput_${r.id}" value="${r.numeroNotaCredito||''}" style="width:160px;">
+          <label class="hint" style="display:block;margin-bottom:3px;" title="El N° del trámite que se pide a Contabilidad para que emita la Nota de Crédito.">📝 N° de Solicitud de NC <span style="color:var(--muted);font-weight:400;">(el trámite)</span></label>
+          <input type="text" id="ncInput_${r.id}" value="${r.numeroNotaCredito||''}" style="width:160px;border-left:3px solid #5b9bd5;">
         </div>
         <div>
-          <label class="hint" style="display:block;margin-bottom:3px;">Número de NC</label>
-          <input type="text" id="ncFinalInput_${r.id}" value="${r.numeroNC||''}" style="width:160px;">
+          <label class="hint" style="display:block;margin-bottom:3px;" title="El N° final de la Nota de Crédito, una vez que Contabilidad la emite. Normalmente llega después de cerrar.">🧾 Número de NC <span style="color:var(--muted);font-weight:400;">(la NC emitida)</span></label>
+          <input type="text" id="ncFinalInput_${r.id}" value="${r.numeroNC||''}" style="width:160px;border-left:3px solid var(--ok);">
         </div>
         ${tienePermiso('cerrarSolicitudes') ? `<button class="btn" onclick="cerrarReclamo('${r.id}')">Cerrar solicitud</button>` : ''}
         ${tienePermiso('eliminarSolicitudes') ? `<button class="btn danger" onclick="eliminarReclamo('${r.id}')">Eliminar</button>` : ''}
@@ -1293,7 +1436,7 @@ function renderTarjetaReclamo(r, contexto){
   return `<div id="tarjeta_${r.id}" style="border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:12px;">
     <div class="row" style="justify-content:space-between;flex-wrap:wrap;">
       <div>
-        <strong style="color:var(--navy);">${r.numero}</strong> <span class="pill ${ESTADO_RECLAMO_PILL[r.estado]}">${ESTADO_RECLAMO_LABEL[r.estado]}</span>${r.posibleDuplicado ? ` <span class="pill alert">⚠️ Posible duplicado (NV/Guía/Factura)</span>` : ''}${r.incompleta ? ` <span class="pill warn">⚠️ Incompleta</span>` : ''}${badgeDias}
+        <strong style="color:var(--navy);">${r.numero}</strong> <span class="pill ${ESTADO_RECLAMO_PILL[r.estado]}">${etiquetaEstado(r.estado)}</span>${r.posibleDuplicado ? ` <span class="pill alert">⚠️ Posible duplicado (NV/Guía/Factura)</span>` : ''}${r.incompleta ? ` <span class="pill warn">⚠️ Incompleta</span>` : ''}${badgeDias}
         <div class="small-note">NV ${r.nv} · Guía N°: ${r.guiaFolio||'-'} · Factura: ${r.factura||'-'} · Cliente: ${r.cliente||'-'}</div>
         <div class="small-note">Patente: ${r.patente||'-'} · Retirado por: ${r.retiradoPor||'-'} · Operador de Grúa: ${r.operadorGrua||'-'}</div>
         <div class="small-note">Solicitado por ${r.usuarioSolicitante} — ${new Date(r.fecha).toLocaleString('es-CL')}</div>
@@ -1310,10 +1453,10 @@ function renderTarjetaReclamo(r, contexto){
     ${r.incompleta ? `<div class="small-note" style="margin-top:6px;">⚠️ Marcada Recibida/Incompleta por ${r.revisadoPor} — ${r.fechaRevision?new Date(r.fechaRevision).toLocaleString('es-CL'):''}${r.comentarioIncompleta?': '+r.comentarioIncompleta:''}</div>` : ''}
     ${r.estado==='aprobado' && r.revisadoPor ? `<div class="small-note" style="margin-top:6px;">Solicitud Recibida por ${r.revisadoPor} — ${new Date(r.fechaRevision).toLocaleString('es-CL')} (a cargo del caso)</div>` : ''}
     ${r.estado==='rechazado' ? `<div class="small-note" style="margin-top:6px;">Rechazado por ${r.revisadoPor} — ${new Date(r.fechaRevision).toLocaleString('es-CL')} · Motivo de rechazo: <strong>${r.notaRevision||'-'}</strong></div>` : ''}
-    ${r.estado==='cerrado' ? `<div class="small-note" style="margin-top:6px;">Cerrado por ${r.usuarioCierre} — ${new Date(r.fechaCierre).toLocaleString('es-CL')} · N° Sol. NC: <strong>${r.numeroNotaCredito}</strong>
+    ${r.estado==='cerrado' ? `<div class="small-note" style="margin-top:6px;">Cerrado por ${r.usuarioCierre} — ${new Date(r.fechaCierre).toLocaleString('es-CL')} · 📝 N° Sol. NC: <strong>${r.numeroNotaCredito}</strong>
       ${tienePermiso('cerrarSolicitudes')
-        ? `<br>Número de NC: <input type="text" value="${r.numeroNC||''}" style="width:140px;" onchange="actualizarNumeroNC('${r.id}', this.value)">`
-        : ` · Número de NC: <strong>${r.numeroNC||'pendiente'}</strong>`}
+        ? `<br>🧾 Número de NC: <input type="text" value="${r.numeroNC||''}" style="width:140px;border-left:3px solid var(--ok);" onchange="actualizarNumeroNC('${r.id}', this.value)">`
+        : ` · 🧾 Número de NC: <strong>${r.numeroNC||'pendiente'}</strong>`}
     </div>` : ''}
     <div style="margin-top:10px;">${acciones} <button class="btn secondary" onclick="verLineaDeTiempo('${r.id}')">Ver línea de tiempo</button></div>
   </div>`;
@@ -1424,13 +1567,13 @@ function renderHistorial(){
   if(!lista.length){ tbody.innerHTML=''; empty.style.display='block'; return; }
   empty.style.display = 'none';
   tbody.innerHTML = lista.map(r => `<tr id="filaHist_${r.id}">
-    <td>${r.numero}${r.posibleDuplicado ? ' ⚠️' : ''}</td><td>${new Date(r.fecha).toLocaleDateString('es-CL')}</td><td>${r.nv}</td><td>${r.guiaFolio||'-'}</td>
-    <td>${r.cliente||'-'}</td><td>${r.usuarioSolicitante}</td><td>${TIPO_RECLAMO_LABEL[r.tipoReclamo] || r.tipoReclamo}</td>
-    <td><span class="pill ${ESTADO_RECLAMO_PILL[r.estado]}">${ESTADO_RECLAMO_LABEL[r.estado]}</span></td>
-    <td>${r.estado==='rechazado' ? (r.notaRevision||'-') : '-'}</td>
-    <td>${r.numeroNotaCredito||'-'}</td>
-    <td>${r.numeroNC||'-'}</td>
-    <td>
+    <td data-etiqueta="N°">${r.numero}${r.posibleDuplicado ? ' ⚠️' : ''}</td><td data-etiqueta="Fecha">${new Date(r.fecha).toLocaleDateString('es-CL')}</td><td data-etiqueta="NV">${r.nv}</td><td data-etiqueta="Guía">${r.guiaFolio||'-'}</td>
+    <td data-etiqueta="Cliente">${r.cliente||'-'}</td><td data-etiqueta="Solicitante">${r.usuarioSolicitante}</td><td data-etiqueta="Tipo">${TIPO_RECLAMO_LABEL[r.tipoReclamo] || r.tipoReclamo}</td>
+    <td data-etiqueta="Estado"><span class="pill ${ESTADO_RECLAMO_PILL[r.estado]}">${etiquetaEstado(r.estado)}</span></td>
+    <td data-etiqueta="Motivo Rechazo">${r.estado==='rechazado' ? (r.notaRevision||'-') : '-'}</td>
+    <td data-etiqueta="N° Sol. Nota Crédito">${r.numeroNotaCredito||'-'}</td>
+    <td data-etiqueta="Número de NC">${r.numeroNC||'-'}</td>
+    <td data-etiqueta="Acciones">
       <button class="btn secondary" style="padding:4px 8px;font-size:.72rem;" onclick="verDetalleHistorial('${r.id}')">Ver</button>
       ${tienePermiso('editarRechazadas') && r.estado==='rechazado' ? `<button class="btn secondary" style="padding:4px 8px;font-size:.72rem;" onclick="abrirEdicionReclamo('${r.id}')">Editar</button>` : ''}
       ${tienePermiso('eliminarSolicitudes') ? `<button class="btn danger" style="padding:4px 8px;font-size:.72rem;" onclick="eliminarReclamo('${r.id}')">Eliminar</button>` : ''}
@@ -1583,6 +1726,23 @@ function cambiarNotaRevision(id, valor){
   const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
   r.notaRevision = valor; dbGuardarReclamo(r);
 }
+// Aviso breve y animado para momentos de cierre — nada invasivo, se
+// muestra solo y se va solo, no requiere que el usuario haga nada.
+function mostrarCelebracion(mensaje){
+  let toast = document.getElementById('toastExito');
+  if(!toast){
+    toast = document.createElement('div');
+    toast.id = 'toastExito';
+    toast.className = 'toast-exito';
+    document.body.appendChild(toast);
+  }
+  toast.innerHTML = `<span class="check">✅</span><span>${mensaje}</span>`;
+  toast.classList.remove('mostrar');
+  void toast.offsetWidth; // fuerza a reiniciar la animación si ya estaba visible
+  requestAnimationFrame(() => toast.classList.add('mostrar'));
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(() => toast.classList.remove('mostrar'), 2600);
+}
 function cerrarReclamo(id){
   if(!tienePermiso('cerrarSolicitudes')) return;
   const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
@@ -1593,6 +1753,7 @@ function cerrarReclamo(id){
   r.estado='cerrado'; r.fechaCierre=new Date().toISOString(); r.usuarioCierre=usuarioActual;
   registrarEvento(r, 'cerrada', `N° Sol. NC: ${nc}`);
   dbGuardarReclamo(r); renderRevision(); renderHistorial();
+  mostrarCelebracion(`Solicitud ${r.numero} cerrada`);
 }
 // El Número de NC final suele llegar después de cerrar (lo emite
 // contabilidad) — se puede completar o corregir en cualquier momento.
@@ -1793,6 +1954,55 @@ function renderDashboard(){
 
   dashRenderEvolucionMensual(visibles);
   dashRenderRankingCodigos(visibles);
+  dashRenderReconocimiento(visibles);
+}
+// Panel de reconocimiento — usa los mismos datos que el resto del Dashboard,
+// solo que resaltando quién resuelve más rápido y qué vendedor tiene menos
+// solicitudes con problemas. Queda solo para Admin: son datos de desempeño
+// de personas puntuales, no algo para exponer de forma general.
+function dashRenderReconocimiento(visibles){
+  const panel = document.getElementById('panelReconocimiento');
+  const cont = document.getElementById('dashReconocimiento');
+  if(!panel || !cont) return;
+  if(!esAdmin()){ panel.style.display = 'none'; return; }
+  panel.style.display = '';
+
+  const porGestionador = {};
+  visibles.filter(r=>r.estado==='cerrado' && r.fechaCierre && r.usuarioCierre).forEach(r=>{
+    const dias = (new Date(r.fechaCierre)-new Date(r.fecha))/86400000;
+    if(!porGestionador[r.usuarioCierre]) porGestionador[r.usuarioCierre] = {suma:0, cuenta:0};
+    porGestionador[r.usuarioCierre].suma += dias;
+    porGestionador[r.usuarioCierre].cuenta += 1;
+  });
+  const rankingGestion = Object.entries(porGestionador)
+    .map(([u,v])=>({usuario:u, promedio:v.suma/v.cuenta, cuenta:v.cuenta}))
+    .sort((a,b)=>a.promedio-b.promedio)
+    .slice(0,5);
+
+  const totalesPorVendedor = {}, rechazadasPorVendedor = {};
+  visibles.forEach(r=>{
+    const v = r.vendedor || 'Sin dato';
+    totalesPorVendedor[v] = (totalesPorVendedor[v]||0)+1;
+    if(r.estado==='rechazado') rechazadasPorVendedor[v] = (rechazadasPorVendedor[v]||0)+1;
+  });
+  const rankingVendedores = Object.keys(totalesPorVendedor)
+    .filter(v => totalesPorVendedor[v] >= 2)
+    .map(v => ({ vendedor:v, total:totalesPorVendedor[v], rechazadas:rechazadasPorVendedor[v]||0, tasa:(rechazadasPorVendedor[v]||0)/totalesPorVendedor[v] }))
+    .sort((a,b)=> a.tasa-b.tasa)
+    .slice(0,5);
+
+  cont.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">
+      <div>
+        <h3 style="font-size:.85rem;color:var(--navy);margin:0 0 8px;">⚡ Resolución más rápida (promedio de días, casos cerrados)</h3>
+        ${rankingGestion.length ? rankingGestion.map((g,i)=>`<div class="small-note" style="padding:4px 0;">${i+1}. <strong>${g.usuario}</strong> — ${fmt(g.promedio,1)} días (${g.cuenta} caso${g.cuenta===1?'':'s'})</div>`).join('') : '<p class="hint">Todavía no hay casos cerrados suficientes.</p>'}
+      </div>
+      <div>
+        <h3 style="font-size:.85rem;color:var(--navy);margin:0 0 8px;">🎯 Menos solicitudes con problemas (menor % rechazadas, mín. 2 solicitudes)</h3>
+        ${rankingVendedores.length ? rankingVendedores.map((v,i)=>`<div class="small-note" style="padding:4px 0;">${i+1}. <strong>${v.vendedor}</strong> — ${fmt(v.tasa*100,0)}% rechazadas (${v.rechazadas} de ${v.total})</div>`).join('') : '<p class="hint">Todavía no hay datos suficientes.</p>'}
+      </div>
+    </div>
+  `;
 }
 
 // ==================== Consulta Guías ====================
@@ -1801,6 +2011,7 @@ function buscarConsultaGuia(){
   const tipo = document.getElementById('tipoBusquedaConsulta').value;
   const valor = document.getElementById('buscarConsultaInput').value.trim();
   const cont = document.getElementById('resultadoConsultaGuia');
+  cont.className = '';
   if(!valor){ cont.innerHTML = '<p class="hint">Ingresa un número para buscar.</p>'; return; }
   let candidatas = guiasDatos.filter(g => {
     if(tipo==='nv') return g.nv === valor;
@@ -2077,7 +2288,7 @@ function buscarParaLineaDeTiempo(){
         <tbody>
           ${candidatas.map(r => `<tr>
             <td>${r.numero}</td><td>${new Date(r.fecha).toLocaleDateString('es-CL')}</td><td>${r.nv||'-'}</td><td>${r.cliente||'-'}</td>
-            <td><span class="pill ${ESTADO_RECLAMO_PILL[r.estado]}">${ESTADO_RECLAMO_LABEL[r.estado]}</span></td>
+            <td><span class="pill ${ESTADO_RECLAMO_PILL[r.estado]}">${etiquetaEstado(r.estado)}</span></td>
             <td><button class="btn" style="padding:4px 10px;font-size:.78rem;" onclick="verLineaDeTiempo('${r.id}')">Ver línea de tiempo</button></td>
           </tr>`).join('')}
         </tbody>
@@ -2087,7 +2298,7 @@ function buscarParaLineaDeTiempo(){
 // Se puede llamar desde cualquier tarjeta (Pendientes/Revisión/Historial) —
 // cambia directo a la pestaña Línea de Tiempo y muestra ese reclamo.
 function verLineaDeTiempo(id){
-  document.querySelector('#tabs button[data-tab="lineatiempo"]').click();
+  document.querySelector('[data-tab="lineatiempo"]').click();
   document.getElementById('resultadoBusquedaTiempo').innerHTML = '';
   document.getElementById('buscarTiempoInput').value = '';
   renderLineaDeTiempo(id);
@@ -2097,6 +2308,7 @@ const EVENTO_COLOR = { creada:'', recibida:'ok', incompleta:'warn', completada:'
 function renderLineaDeTiempo(id){
   const r = reclamosPostventa.find(x=>x.id===id);
   const cont = document.getElementById('vistaLineaTiempo');
+  cont.className = '';
   if(!r || !puedeVerReclamo(r)){ cont.innerHTML = '<p class="hint">No se encontró la solicitud, o no tienes permiso para verla.</p>'; return; }
   // Los reclamos creados antes de esta función no tienen "eventos" guardados
   // — se arma una línea de tiempo básica con lo que sí se sabe de ellos.
@@ -2111,7 +2323,7 @@ function renderLineaDeTiempo(id){
     <div style="border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
       <div class="row" style="justify-content:space-between;flex-wrap:wrap;">
         <strong style="color:var(--navy);">${r.numero}</strong>
-        <span class="pill ${ESTADO_RECLAMO_PILL[r.estado]}">${ESTADO_RECLAMO_LABEL[r.estado]}</span>
+        <span class="pill ${ESTADO_RECLAMO_PILL[r.estado]}">${etiquetaEstado(r.estado)}</span>
       </div>
       <div class="small-note">NV ${r.nv} · Guía N°: ${r.guiaFolio||'-'} · Cliente: ${r.cliente||'-'} · Solicitante: ${r.usuarioSolicitante}</div>
       <div class="timeline" style="margin-top:14px;">
