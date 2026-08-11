@@ -1310,12 +1310,15 @@ async function subirAdjuntoSiCorresponde(archivo){
   if(!archivo) return null;
   if(!CLOUDINARY_CLOUD_NAME || !CLOUDINARY_UPLOAD_PRESET) return archivo;
   try{
-    // Las imágenes van como "image"; PDF/Excel/CSV van como "raw" — Cloudinary
-    // bloquea por defecto la entrega de PDF subidos como imagen (medida de
-    // seguridad de ellos), así que para documentos que no son imagen se evita
-    // esa vía por completo.
+    // Cloudinary maneja 3 categorías: imagen, video y "raw" (cualquier otro
+    // documento). PDF/Excel/CSV van como "raw" — Cloudinary bloquea por
+    // defecto la entrega de PDF subidos como imagen (medida de seguridad de
+    // ellos). Los videos van por su propia vía "video": si se mandan como
+    // "raw" (como pasaba antes), Cloudinary los guarda pero no los entrega
+    // de la forma que un navegador necesita para reproducirlos.
     const esImagen = archivo.tipo && archivo.tipo.startsWith('image/');
-    const tipoRecurso = esImagen ? 'image' : 'raw';
+    const esVideo = archivo.tipo && archivo.tipo.startsWith('video/');
+    const tipoRecurso = esImagen ? 'image' : (esVideo ? 'video' : 'raw');
     // Sin esto, un archivo "raw" (PDF, video, Excel) puede quedar guardado
     // sin una extensión reconocible en su URL, y el navegador no sabe con
     // qué abrirlo al descargarlo — se fuerza un nombre que la conserve.
