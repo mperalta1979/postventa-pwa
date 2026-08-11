@@ -1316,9 +1316,14 @@ async function subirAdjuntoSiCorresponde(archivo){
     // esa vía por completo.
     const esImagen = archivo.tipo && archivo.tipo.startsWith('image/');
     const tipoRecurso = esImagen ? 'image' : 'raw';
+    // Sin esto, un archivo "raw" (PDF, video, Excel) puede quedar guardado
+    // sin una extensión reconocible en su URL, y el navegador no sabe con
+    // qué abrirlo al descargarlo — se fuerza un nombre que la conserve.
+    const nombreSeguro = (archivo.nombre||'archivo').replace(/[^a-zA-Z0-9_.-]/g, '_');
     const form = new FormData();
     form.append('file', archivo.dataUrl);
     form.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
+    form.append('public_id', `${Date.now()}_${nombreSeguro}`);
     const resp = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/${tipoRecurso}/upload`, { method:'POST', body: form });
     const data = await resp.json();
     if(data.secure_url) return { nombre: archivo.nombre, tipo: archivo.tipo, url: data.secure_url };
@@ -1416,6 +1421,82 @@ async function enviarSolicitud(){
   alert('Solicitud recibida, tiempo de respuesta 1 a 5 dia habiles, revise pestaña En revision');
 }
 
+// ==================== Gestionar / reemplazar adjuntos ====================
+// El propio solicitante (para arreglar un archivo que subió mal o que quedó
+// roto) o el Admin (para ayudar en cualquier caso) pueden quitar adjuntos
+// existentes y agregar otros nuevos — sin importar el estado de la solicitud,
+// porque esto corrige un problema técnico del archivo, no cambia el reclamo.
+function puedeGestionarAdjuntos(r){
+  return esAdmin() || r.usuarioSolicitante === usuarioActual;
+}
+function renderFormularioGestionAdjuntos(r){
+  const lista = (r.archivos && r.archivos.length) ? r.archivos : (r.archivo ? [r.archivo] : []);
+  const cupo = MAX_ADJUNTOS_POR_SOLICITUD - lista.length;
+  return `<div id="tarjeta_${r.id}" style="border:1px solid var(--navy);border-radius:10px;padding:14px 16px;margin-bottom:12px;">
+    <strong style="color:var(--navy);">Adjuntos — ${r.numero}</strong>
+    <div style="margin-top:10px;">
+      ${lista.length ? lista.map((a,idx) => `
+        <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <a href="${a.url||a.dataUrl}" target="_blank" class="pill" style="text-decoration:none;">📎 ${a.nombre}</a>
+          <button class="btn danger" style="padding:3px 8px;font-size:.72rem;" onclick="quitarAdjunto('${r.id}', ${idx})">Quitar</button>
+        </div>`).join('') : `<p class="hint">No tiene adjuntos.</p>`}
+    </div>
+    ${cupo>0 ? `
+      <div style="margin-top:8px;">
+        <label class="hint" style="display:block;margin-bottom:3px;">Agregar archivo nuevo — puedes sumar ${cupo} más</label>
+        <input type="file" id="gestionAdjuntosInput_${r.id}" accept="image/*,.pdf,.xls,.xlsx,.csv" multiple>
+      </div>` : `<p class="hint" style="margin-top:8px;">Ya tiene el máximo de ${MAX_ADJUNTOS_POR_SOLICITUD} adjuntos — quita alguno si quieres agregar otro.</p>`}
+    <div class="row" style="margin-top:10px;">
+      <button class="btn" onclick="guardarGestionAdjuntos('${r.id}')">Guardar cambios</button>
+      <button class="btn secondary" onclick="cancelarGestionAdjuntos()">Cerrar</button>
+      <span id="gestionAdjuntosStatus_${r.id}" class="hint"></span>
+    </div>
+  </div>`;
+}
+function abrirGestionAdjuntos(id){
+  const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
+  if(!puedeGestionarAdjuntos(r)) return;
+  const el = document.getElementById(`tarjeta_${id}`); if(!el) return;
+  el.outerHTML = renderFormularioGestionAdjuntos(r);
+  edicionInlineAbierta = true;
+}
+function cancelarGestionAdjuntos(){
+  edicionInlineAbierta = false;
+  renderPendientes(); renderRevision(); renderHistorial();
+}
+async function quitarAdjunto(id, idx){
+  const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
+  if(!puedeGestionarAdjuntos(r)) return;
+  const lista = (r.archivos && r.archivos.length) ? r.archivos.slice() : (r.archivo ? [r.archivo] : []);
+  const quitado = lista.splice(idx,1)[0];
+  r.archivos = lista;
+  delete r.archivo;
+  registrarEvento(r, 'adjunto_quitado', quitado ? `${usuarioActual} quitó: ${quitado.nombre}` : '');
+  await dbGuardarReclamo(r);
+  const el = document.getElementById(`tarjeta_${id}`);
+  if(el) el.outerHTML = renderFormularioGestionAdjuntos(r);
+}
+async function guardarGestionAdjuntos(id){
+  const r = reclamosPostventa.find(x=>x.id===id); if(!r) return;
+  if(!puedeGestionarAdjuntos(r)) return;
+  const status = document.getElementById(`gestionAdjuntosStatus_${id}`);
+  const input = document.getElementById(`gestionAdjuntosInput_${id}`);
+  const existentes = (r.archivos && r.archivos.length) ? r.archivos : (r.archivo ? [r.archivo] : []);
+  const cupo = MAX_ADJUNTOS_POR_SOLICITUD - existentes.length;
+  if(!input || !input.files.length){ cancelarGestionAdjuntos(); return; }
+  if(cupo<=0){ status.textContent = 'Ya tiene el máximo de adjuntos — quita alguno primero.'; return; }
+  let nuevos;
+  try{ nuevos = await leerArchivosAdjuntos(input, cupo); }catch(e){ return; }
+  if(!nuevos.length){ cancelarGestionAdjuntos(); return; }
+  status.textContent = 'Subiendo...';
+  nuevos = await subirAdjuntosSiCorresponde(nuevos);
+  r.archivos = [...existentes, ...nuevos];
+  delete r.archivo;
+  registrarEvento(r, 'adjunto_agregado', `${usuarioActual} agregó: ${nuevos.map(n=>n.nombre).join(', ')}`);
+  await dbGuardarReclamo(r);
+  cancelarGestionAdjuntos();
+}
+
 // ==================== Tarjetas de reclamo (compartidas) ====================
 function renderTarjetaReclamo(r, contexto){
   const puedeCalidad = contexto==='revision' && tienePermiso('controlCalidad');
@@ -1471,7 +1552,8 @@ function renderTarjetaReclamo(r, contexto){
       </div>
     </div>
     <div class="small-note" style="margin-top:6px;">${r.motivo}</div>
-    ${(() => { const lista = (r.archivos && r.archivos.length) ? r.archivos : (r.archivo ? [r.archivo] : []); return lista.length ? `<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">${lista.map(a => `<a href="${a.url||a.dataUrl}" download="${a.nombre}" target="_blank" class="pill" style="text-decoration:none;">📎 ${a.nombre}</a>`).join('')}</div>` : ''; })()}
+    ${(() => { const lista = (r.archivos && r.archivos.length) ? r.archivos : (r.archivo ? [r.archivo] : []); return lista.length ? `<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">${lista.map(a => `<a href="${a.url||a.dataUrl}" download="${a.nombre}" target="_blank" class="pill" style="text-decoration:none;">📎 ${a.nombre}</a>`).join('')}</div>` : ''; })()}
+    ${puedeGestionarAdjuntos(r) ? `<button class="btn secondary" style="padding:3px 8px;font-size:.7rem;margin-top:5px;" onclick="abrirGestionAdjuntos('${r.id}')">🔄 Gestionar adjuntos</button>` : ''}
     ${r.archivoOmitidoEnMigracion ? `<div class="small-note" style="margin-top:4px;">⚠️ El adjunto original de esta solicitud quedó pendiente de migrar (era muy pesado para el traspaso).</div>` : ''}
     <table style="margin-top:8px;">
       <thead><tr><th>Código</th><th>Descripción</th><th>Despachada</th><th>Reclamada</th><th>Motivo</th><th>Control de Calidad</th></tr></thead>
@@ -1645,7 +1727,9 @@ const EVENTO_ETIQUETA = {
   reabierta:'Editada y reabierta',
   cerrada:'Cerrada',
   calidad_aprobada:'Control de Calidad — Aprobado',
-  calidad_rechazada:'Control de Calidad — Rechazado'
+  calidad_rechazada:'Control de Calidad — Rechazado',
+  adjunto_agregado:'Adjunto agregado',
+  adjunto_quitado:'Adjunto quitado'
 };
 function registrarEvento(r, tipo, comentario){
   if(!r.eventos) r.eventos = [];
@@ -2330,8 +2414,8 @@ function verLineaDeTiempo(id){
   document.getElementById('buscarTiempoInput').value = '';
   renderLineaDeTiempo(id);
 }
-const EVENTO_ICONO = { creada:'📝', recibida:'📥', incompleta:'⚠️', completada:'✍️', rechazada:'❌', reabierta:'🔁', cerrada:'🏁', calidad_aprobada:'✅', calidad_rechazada:'🚫' };
-const EVENTO_COLOR = { creada:'', recibida:'ok', incompleta:'warn', completada:'ok', rechazada:'alert', reabierta:'warn', cerrada:'ok', calidad_aprobada:'ok', calidad_rechazada:'alert' };
+const EVENTO_ICONO = { creada:'📝', recibida:'📥', incompleta:'⚠️', completada:'✍️', rechazada:'❌', reabierta:'🔁', cerrada:'🏁', calidad_aprobada:'✅', calidad_rechazada:'🚫', adjunto_agregado:'📎', adjunto_quitado:'🗑️' };
+const EVENTO_COLOR = { creada:'', recibida:'ok', incompleta:'warn', completada:'ok', rechazada:'alert', reabierta:'warn', cerrada:'ok', calidad_aprobada:'ok', calidad_rechazada:'alert', adjunto_agregado:'', adjunto_quitado:'warn' };
 function renderLineaDeTiempo(id){
   const r = reclamosPostventa.find(x=>x.id===id);
   const cont = document.getElementById('vistaLineaTiempo');
