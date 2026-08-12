@@ -25,11 +25,11 @@
     --muted:#5c7086;
   }
   *{box-sizing:border-box;}
-  body{margin:0;font-family:Segoe UI,Arial,sans-serif;background:var(--bg-celeste);color:var(--text);}
+  body{margin:0;font-family:Segoe UI,Arial,sans-serif;background:var(--bg-celeste);color:var(--text);overflow-x:hidden;}
   header{background:var(--navy);color:#fff;padding:14px 24px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;}
   header h1{margin:0;font-size:1.3rem;}
   header .sub{font-size:.78rem;color:#b9cbe4;}
-  .userbox{display:flex;align-items:center;gap:12px;font-size:.85rem;}
+  .userbox{display:flex;align-items:center;flex-wrap:wrap;gap:12px;font-size:.85rem;}
   nav#tabs{background:var(--navy-dark);display:flex;flex-wrap:wrap;padding:0 20px;}
   nav#tabs button{background:none;border:none;color:#cddcee;padding:12px 16px;cursor:pointer;font-size:.88rem;border-bottom:3px solid transparent;}
   nav#tabs button:hover{color:#fff;}
