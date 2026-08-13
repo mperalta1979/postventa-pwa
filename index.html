@@ -353,6 +353,10 @@
         <h2>Postventa — Historial</h2>
         <div class="row filters">
           <input type="text" id="filtroHistNV" placeholder="Filtrar por NV...">
+          <input type="text" id="filtroHistGuia" placeholder="Filtrar por Guía...">
+          <input type="text" id="filtroHistFactura" placeholder="Filtrar por Factura...">
+          <input type="text" id="filtroHistCliente" placeholder="Filtrar por Cliente...">
+          <input type="text" id="filtroHistProducto" placeholder="Filtrar por Producto (código o nombre)...">
           <select id="filtroHistEstado">
             <option value="">Todos los estados</option>
             <option value="rechazado">Rechazado</option>
@@ -1136,10 +1140,11 @@ function buscarDocumentoNV(){
   // cualquier estado). Si confirma que quiere seguir, no se le vuelve a
   // preguntar al enviar; la solicitud igual queda marcada como posible
   // duplicado para que el gestionador lo vea.
-  const yaExiste = reclamosPostventa.some(r => r.nv===numero || r.guiaFolio===numero || r.factura===numero);
+  const coincidentes = reclamosPostventa.filter(r => r.nv===numero || r.guiaFolio===numero || r.factura===numero);
   window.__duplicadoConfirmadoEnBusqueda = false;
-  if(yaExiste){
-    if(!confirm('Numero de guia, NV o Factura registra solicitud de post venta, por favor revise ¿desea continuar?')){
+  if(coincidentes.length){
+    const numerosRec = coincidentes.map(r=>r.numero).join(', ');
+    if(!confirm(`Numero de guia, NV o Factura registra solicitud de post venta (${numerosRec}), por favor revise ¿desea continuar?`)){
       cont.innerHTML = '';
       return;
     }
@@ -1202,9 +1207,10 @@ function mostrarFormularioGuia(guia){
   // coincidencia real es con la Guía o Factura de esta guía puntual), se
   // revisa de nuevo con los datos propios de la guía elegida.
   if(!window.__duplicadoConfirmadoEnBusqueda){
-    const yaExiste = reclamosPostventa.some(r => (guia.nv && r.nv===guia.nv) || (guia.folio && r.guiaFolio===guia.folio) || (guia.factura && r.factura===guia.factura));
-    if(yaExiste){
-      if(!confirm('Numero de guia, NV o Factura registra solicitud de post venta, por favor revise ¿desea continuar?')){
+    const coincidentes = reclamosPostventa.filter(r => (guia.nv && r.nv===guia.nv) || (guia.folio && r.guiaFolio===guia.folio) || (guia.factura && r.factura===guia.factura));
+    if(coincidentes.length){
+      const numerosRec = coincidentes.map(r=>r.numero).join(', ');
+      if(!confirm(`Numero de guia, NV o Factura registra solicitud de post venta (${numerosRec}), por favor revise ¿desea continuar?`)){
         cont.innerHTML = '';
         return;
       }
@@ -1688,9 +1694,17 @@ function renderHistorial(){
   if(!tbody) return;
   let lista = reclamosPostventa.filter(r => (r.estado==='cerrado'||r.estado==='rechazado') && puedeVerReclamo(r));
   const fNV = (document.getElementById('filtroHistNV').value||'').trim().toLowerCase();
+  const fGuia = (document.getElementById('filtroHistGuia').value||'').trim().toLowerCase();
+  const fFactura = (document.getElementById('filtroHistFactura').value||'').trim().toLowerCase();
+  const fCliente = (document.getElementById('filtroHistCliente').value||'').trim().toLowerCase();
+  const fProducto = (document.getElementById('filtroHistProducto').value||'').trim().toLowerCase();
   const fEstado = document.getElementById('filtroHistEstado').value;
   lista = lista.filter(r => {
     if(fNV && !String(r.nv).toLowerCase().includes(fNV)) return false;
+    if(fGuia && !String(r.guiaFolio).toLowerCase().includes(fGuia)) return false;
+    if(fFactura && !String(r.factura).toLowerCase().includes(fFactura)) return false;
+    if(fCliente && !String(r.cliente).toLowerCase().includes(fCliente)) return false;
+    if(fProducto && !(r.items||[]).some(it => (it.codigo||'').toLowerCase().includes(fProducto) || (it.descripcion||'').toLowerCase().includes(fProducto))) return false;
     if(fEstado && r.estado!==fEstado) return false;
     return true;
   });
@@ -1736,6 +1750,10 @@ function cerrarDetalleHistorial(id){
   edicionInlineAbierta = false;
 }
 document.getElementById('filtroHistNV').addEventListener('input', renderHistorial);
+document.getElementById('filtroHistGuia').addEventListener('input', renderHistorial);
+document.getElementById('filtroHistFactura').addEventListener('input', renderHistorial);
+document.getElementById('filtroHistCliente').addEventListener('input', renderHistorial);
+document.getElementById('filtroHistProducto').addEventListener('input', renderHistorial);
 document.getElementById('filtroHistEstado').addEventListener('change', renderHistorial);
 // Registra un paso en la línea de tiempo del reclamo. No se guarda aparte —
 // vive dentro del mismo documento del reclamo, así siempre se guarda junto
