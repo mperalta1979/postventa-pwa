@@ -1123,6 +1123,7 @@ document.getElementById('btnLimpiarNueva').addEventListener('click', () => {
   document.getElementById('resultadoBusquedaNV').innerHTML = '';
   window.__busquedaNVActual = null;
   window.__candidatasGuia = null;
+  window.__duplicadoConfirmadoEnBusqueda = false;
 });
 document.getElementById('buscarNVInput').addEventListener('keydown', (e)=>{ if(e.key==='Enter') buscarDocumentoNV(); });
 function buscarDocumentoNV(){
@@ -1130,6 +1131,20 @@ function buscarDocumentoNV(){
   const numero = document.getElementById('buscarNVInput').value.trim();
   const cont = document.getElementById('resultadoBusquedaNV');
   if(!numero){ cont.innerHTML = '<p class="hint">Ingresa un número.</p>'; return; }
+  // Aviso inmediato, apenas se busca — antes de mostrar guía ni formulario —
+  // si ese mismo N° de Guía, NV o Factura ya tiene alguna solicitud (de
+  // cualquier estado). Si confirma que quiere seguir, no se le vuelve a
+  // preguntar al enviar; la solicitud igual queda marcada como posible
+  // duplicado para que el gestionador lo vea.
+  const yaExiste = reclamosPostventa.some(r => r.nv===numero || r.guiaFolio===numero || r.factura===numero);
+  window.__duplicadoConfirmadoEnBusqueda = false;
+  if(yaExiste){
+    if(!confirm('Numero de guia, NV o Factura registra solicitud de post venta, por favor revise ¿desea continuar?')){
+      cont.innerHTML = '';
+      return;
+    }
+    window.__duplicadoConfirmadoEnBusqueda = true;
+  }
   if(!guiasDatos.length){
     cont.innerHTML = `<p class="hint">Todavía no hay guías de despacho cargadas. ${tienePermiso('accesoMaestro') ? 'Ve a Maestro \u2192 Importar NV para cargarlas.' : 'Pídele al Admin que cargue el archivo de Guías de Despacho.'}</p>`;
     return;
@@ -1183,6 +1198,19 @@ function diasDesdeFecha(fechaISO){
 }
 function mostrarFormularioGuia(guia){
   const cont = document.getElementById('resultadoBusquedaNV');
+  // Si el número que se tecleó no mostró duplicado (ej: se buscó por NV y la
+  // coincidencia real es con la Guía o Factura de esta guía puntual), se
+  // revisa de nuevo con los datos propios de la guía elegida.
+  if(!window.__duplicadoConfirmadoEnBusqueda){
+    const yaExiste = reclamosPostventa.some(r => (guia.nv && r.nv===guia.nv) || (guia.folio && r.guiaFolio===guia.folio) || (guia.factura && r.factura===guia.factura));
+    if(yaExiste){
+      if(!confirm('Numero de guia, NV o Factura registra solicitud de post venta, por favor revise ¿desea continuar?')){
+        cont.innerHTML = '';
+        return;
+      }
+      window.__duplicadoConfirmadoEnBusqueda = true;
+    }
+  }
   const dias = diasDesdeFecha(guia.fecha);
   const fueraDePlazo = dias !== null && dias > PLAZO_LEGAL_DIAS;
   if(fueraDePlazo && !tienePermiso('ingresarFueraDePlazo')){
@@ -1374,19 +1402,10 @@ async function enviarSolicitud(){
   const tipoReclamo = document.getElementById('tipoReclamoSel').value;
   const observaciones = document.getElementById('motivoReclamo').value.trim();
   if(!observaciones){ status.textContent = 'Las observaciones son obligatorias — cuenta brevemente qué pasó.'; return; }
-  // Avisa si esta NV, Guía o Factura ya tiene otra solicitud (de cualquier
-  // estado) — puede ser una duplicidad real o un seguimiento legítimo de un
-  // reclamo anterior, así que se deja decidir a quien está enviando.
-  const yaExiste = reclamosPostventa.some(r =>
-    (ctx.nv && r.nv === ctx.nv) ||
-    (ctx.guia.folio && r.guiaFolio === ctx.guia.folio) ||
-    (ctx.guia.factura && r.factura === ctx.guia.factura)
-  );
-  let posibleDuplicado = false;
-  if(yaExiste){
-    if(!confirm('Numero de NV, Guia o Factura ya cuenta con solicitud realizada ¿Desea continuar?')) return;
-    posibleDuplicado = true;
-  }
+  // El aviso de posible duplicado ya se mostró (y se confirmó) al buscar o
+  // al elegir la guía — acá solo se usa esa respuesta para marcar la
+  // solicitud, sin volver a preguntar lo mismo dos veces.
+  const posibleDuplicado = !!window.__duplicadoConfirmadoEnBusqueda;
   let archivos;
   try{ archivos = await leerArchivosAdjuntos(document.getElementById('archivoReclamo'), MAX_ADJUNTOS_POR_SOLICITUD); }catch(e){ return; }
   if(archivos.length){ status.textContent = 'Subiendo adjuntos...'; archivos = await subirAdjuntosSiCorresponde(archivos); }
