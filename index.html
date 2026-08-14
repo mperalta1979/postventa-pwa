@@ -207,7 +207,17 @@
       <div class="panel">
         <h2>Dashboard Postventa</h2>
         <p class="hint" id="dashScopeHint"></p>
-        <div class="stat-grid" id="dashStatsGrid"></div>
+        <div class="row" style="margin-top:6px;align-items:center;">
+          <label class="hint">Período (para los gráficos y reportes — Pendientes/En Revisión siempre muestra lo actual):</label>
+          <select id="dashRangoFecha">
+            <option value="mes">Este mes</option>
+            <option value="3meses">Últimos 3 meses</option>
+            <option value="anio">Este año</option>
+            <option value="todo" selected>Todo el histórico</option>
+          </select>
+          <button class="btn secondary" id="btnDescargarReporteDashboard">📥 Descargar reporte (Excel)</button>
+        </div>
+        <div class="stat-grid" id="dashStatsGrid" style="margin-top:12px;"></div>
       </div>
 
       <div class="panel">
@@ -247,7 +257,7 @@
 
       <div class="panel">
         <h2>Evolución mensual de solicitudes</h2>
-        <p class="hint">Cantidad de solicitudes creadas por mes, últimos 12 meses.</p>
+        <p class="hint">Cantidad de solicitudes creadas por mes, últimos 12 meses — desglosado por Tipo de Reclamo (pasa el mouse sobre cada segmento para ver el detalle).</p>
         <div id="dashEvolucionMensual"></div>
       </div>
 
@@ -1418,7 +1428,7 @@ async function enviarSolicitud(){
   const items = idxs.map(idx => {
     const l = ctx.data.lineas[idx];
     const cantInput = document.querySelector(`.cantidadReclamadaNV[data-idx="${idx}"]`);
-    return { codigo:l.codigo, descripcion:l.descripcion||'', cantidadDespachada: Number(l.cantidad)||0, cantidad: parseFloat(cantInput.value)||0, motivo: motivosPorLinea[idx] };
+    return { codigo:l.codigo, descripcion:l.descripcion||'', cantidadDespachada: Number(l.cantidad)||0, cantidad: parseFloat(cantInput.value)||0, motivo: motivosPorLinea[idx], precioUnitario: Number(l.precioUnitario)||0 };
   });
   reclamoContador += 1;
   const nuevoReclamo = {
@@ -2059,41 +2069,100 @@ function dashRenderEvolucionMensual(visibles){
   const meses = [];
   for(let i=11;i>=0;i--){
     const d = new Date(hoy.getFullYear(), hoy.getMonth()-i, 1);
-    meses.push({ key:`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`, label: d.toLocaleDateString('es-CL',{month:'short',year:'2-digit'}), count:0 });
+    meses.push({ key:`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`, label: d.toLocaleDateString('es-CL',{month:'short',year:'2-digit'}), total:0, porTipo:{} });
   }
   const porMes = {};
   meses.forEach(m => porMes[m.key]=m);
+  const tiposVistos = [];
   visibles.forEach(r => {
     const d = new Date(r.fecha);
     const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-    if(porMes[key]) porMes[key].count += 1;
+    if(porMes[key]){
+      const tipo = r.tipoReclamo || 'Sin tipo';
+      porMes[key].total += 1;
+      porMes[key].porTipo[tipo] = (porMes[key].porTipo[tipo]||0) + 1;
+      if(!tiposVistos.includes(tipo)) tiposVistos.push(tipo);
+    }
   });
-  const max = Math.max(1, ...meses.map(m=>m.count));
-  document.getElementById('dashEvolucionMensual').innerHTML = `<div class="dash-bars">${meses.map(m => `
+  const colorPorTipo = {};
+  tiposVistos.forEach((t,i) => colorPorTipo[t] = DASH_PALETTE[i % DASH_PALETTE.length]);
+  const max = Math.max(1, ...meses.map(m=>m.total));
+  const leyenda = tiposVistos.map(t => `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:14px;font-size:.74rem;color:var(--muted);"><span style="width:10px;height:10px;border-radius:2px;background:${colorPorTipo[t]};display:inline-block;"></span>${t}</span>`).join('');
+  document.getElementById('dashEvolucionMensual').innerHTML = `
+    ${tiposVistos.length ? `<div style="margin-bottom:8px;">${leyenda}</div>` : ''}
+    <div class="dash-bars">${meses.map(m => `
     <div class="dash-bar-row">
       <span>${m.label}</span>
-      <div class="dash-bar-track"><div class="dash-bar-fill" style="width:${(m.count/max*100)}%;"></div></div>
-      <span>${m.count}</span>
+      <div class="dash-bar-track" style="display:flex;">${tiposVistos.map(t => m.porTipo[t] ? `<div style="width:${(m.porTipo[t]/max*100)}%;background:${colorPorTipo[t]};height:100%;" title="${t}: ${m.porTipo[t]}"></div>` : '').join('')}</div>
+      <span>${m.total}</span>
     </div>`).join('')}</div>`;
 }
+// Cuenta días hábiles (lunes a viernes) entre dos fechas — se usa para medir
+// si se cumplió el plazo prometido de 1 a 5 días hábiles de respuesta.
+function diasHabilesEntre(inicio, fin){
+  let d = new Date(inicio);
+  let contador = 0;
+  while(d < fin){
+    d.setDate(d.getDate()+1);
+    const dia = d.getDay();
+    if(dia!==0 && dia!==6) contador++;
+  }
+  return contador;
+}
+// Busca el precio unitario del código en la guía original de la solicitud,
+// para poder estimar cuánto vale en pesos lo reclamado. Si la guía ya no
+// está cargada, devuelve 0 para ese ítem (no rompe el cálculo del resto).
+function valorReclamado(r){
+  const guia = guiasDatos.find(g => String(g.folio)===String(r.guiaFolio));
+  return (r.items||[]).reduce((s,it) => {
+    if(it.precioUnitario) return s + (it.cantidad||0) * it.precioUnitario;
+    const linea = guia ? guia.lineas.find(l => l.codigo===it.codigo) : null;
+    return s + (it.cantidad||0) * (linea && linea.precioUnitario ? linea.precioUnitario : 0);
+  }, 0);
+}
+function dashRangoFechaDesde(){
+  const valor = document.getElementById('dashRangoFecha').value;
+  const hoy = new Date();
+  if(valor==='mes') return new Date(hoy.getFullYear(), hoy.getMonth(), 1);
+  if(valor==='3meses') return new Date(hoy.getFullYear(), hoy.getMonth()-2, 1);
+  if(valor==='anio') return new Date(hoy.getFullYear(), 0, 1);
+  return null; // todo el histórico
+}
+let ultimoReporteDashboard = null; // se llena en cada render, lo usa el botón de descarga
 function renderDashboard(){
-  const visibles = reclamosPostventa.filter(puedeVerReclamo);
-  const activos = visibles.filter(r => r.estado==='pendiente' || r.estado==='aprobado');
+  const todasVisibles = reclamosPostventa.filter(puedeVerReclamo);
+  // Pendientes/En Revisión y "estancadas" siempre reflejan el estado actual
+  // real, sin importar el filtro de período — un caso pendiente de hace 2
+  // meses sigue siendo urgente hoy, no tiene sentido que el filtro lo oculte.
+  const activos = todasVisibles.filter(r => r.estado==='pendiente' || r.estado==='aprobado');
+  const desde = dashRangoFechaDesde();
+  const visibles = desde ? todasVisibles.filter(r => new Date(r.fecha) >= desde) : todasVisibles;
+
   document.getElementById('dashScopeHint').textContent = tienePermiso('verTodasSolicitudes')
     ? 'Datos de todos los vendedores.'
     : 'Mostrando solo tus propias solicitudes.';
 
   const pendCount = activos.filter(r=>r.estado==='pendiente').length;
   const revCount = activos.filter(r=>r.estado==='aprobado').length;
+  const estancadas = activos.filter(r => r.estado==='pendiente' && Math.floor((Date.now()-new Date(r.fecha).getTime())/86400000) >= 3).length;
   const cerrados = visibles.filter(r=>r.estado==='cerrado' && r.fechaCierre);
   const promedioDias = cerrados.length
     ? cerrados.reduce((s,r)=> s + (new Date(r.fechaCierre)-new Date(r.fecha))/86400000, 0) / cerrados.length
     : null;
 
+  const conRespuesta = visibles.filter(r => r.fechaRevision);
+  const dentroDePlazo = conRespuesta.filter(r => diasHabilesEntre(new Date(r.fecha), new Date(r.fechaRevision)) <= 5);
+  const pctCumplimiento = conRespuesta.length ? (dentroDePlazo.length/conRespuesta.length*100) : null;
+
+  const totalReclamado = visibles.reduce((s,r) => s + valorReclamado(r), 0);
+
   document.getElementById('dashStatsGrid').innerHTML = `
     <div class="stat"><div class="num">${pendCount}</div><div class="lbl">Pendientes</div></div>
     <div class="stat"><div class="num">${revCount}</div><div class="lbl">En Revisión</div></div>
+    <div class="stat"><div class="num" style="${estancadas>0?'color:var(--alert);':''}">${estancadas}</div><div class="lbl">Pendientes estancadas (3+ días)</div></div>
     <div class="stat"><div class="num">${promedioDias!==null?fmt(promedioDias,1):'-'}</div><div class="lbl">Días promedio de resolución</div></div>
+    <div class="stat"><div class="num">${pctCumplimiento!==null?fmt(pctCumplimiento,0)+'%':'-'}</div><div class="lbl">Dentro del plazo prometido (1-5 días hábiles)</div></div>
+    <div class="stat"><div class="num">$${fmt(totalReclamado,0)}</div><div class="lbl">Valor total reclamado (según período)</div></div>
   `;
 
   renderDonutBloque('dashChartGeneral', {Pendientes:pendCount, 'En Revisión':revCount}, ['#b8860b','#1f3864']);
@@ -2106,7 +2175,49 @@ function renderDashboard(){
   dashRenderEvolucionMensual(visibles);
   dashRenderRankingCodigos(visibles);
   dashRenderReconocimiento(visibles);
+
+  ultimoReporteDashboard = { visibles, pendCount, revCount, estancadas, promedioDias, pctCumplimiento, totalReclamado };
 }
+document.getElementById('dashRangoFecha').addEventListener('change', renderDashboard);
+// Arma un Excel con el resumen del Dashboard tal como se ve en pantalla en
+// ese momento (mismo período elegido) — reutiliza los mismos datos que ya
+// se calcularon para pintar los gráficos, no vuelve a consultar nada.
+document.getElementById('btnDescargarReporteDashboard').addEventListener('click', () => {
+  if(!ultimoReporteDashboard){ alert('Espera a que el Dashboard termine de cargar.'); return; }
+  const { visibles, pendCount, revCount, estancadas, promedioDias, pctCumplimiento, totalReclamado } = ultimoReporteDashboard;
+  const wb = XLSX.utils.book_new();
+
+  const resumen = [
+    { Indicador:'Pendientes', Valor: pendCount },
+    { Indicador:'En Revisión', Valor: revCount },
+    { Indicador:'Pendientes estancadas (3+ días)', Valor: estancadas },
+    { Indicador:'Días promedio de resolución', Valor: promedioDias!==null ? Number(promedioDias.toFixed(1)) : '' },
+    { Indicador:'% dentro del plazo prometido (1-5 días hábiles)', Valor: pctCumplimiento!==null ? Number(pctCumplimiento.toFixed(1)) : '' },
+    { Indicador:'Valor total reclamado ($)', Valor: Math.round(totalReclamado) }
+  ];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(resumen), 'Resumen');
+
+  function hojaDesdeConteo(conteo, nombreCampo){
+    const filas = Object.entries(conteo).sort((a,b)=>b[1]-a[1]).map(([k,v])=>({ [nombreCampo]: k, Cantidad: v }));
+    return XLSX.utils.json_to_sheet(filas);
+  }
+  XLSX.utils.book_append_sheet(wb, hojaDesdeConteo(dashContarPor(visibles,'vendedor'), 'Vendedor'), 'Por Vendedor');
+  XLSX.utils.book_append_sheet(wb, hojaDesdeConteo(dashContarPor(visibles,'cliente'), 'Cliente'), 'Por Cliente');
+  XLSX.utils.book_append_sheet(wb, hojaDesdeConteo(dashContarPor(visibles,'operadorGrua'), 'Operador de Grúa'), 'Por Operador');
+  XLSX.utils.book_append_sheet(wb, hojaDesdeConteo(dashContarPorMotivo(visibles), 'Motivo'), 'Por Motivo');
+  XLSX.utils.book_append_sheet(wb, hojaDesdeConteo(dashContarPor(visibles,'tipoReclamo'), 'Tipo de Reclamo'), 'Por Tipo');
+
+  const porCodigo = {};
+  visibles.forEach(r => (r.items||[]).forEach(it => {
+    if(!porCodigo[it.codigo]) porCodigo[it.codigo] = { 'Código':it.codigo, 'Descripción':it.descripcion||'', 'N° de veces':0, 'Cantidad reclamada':0 };
+    porCodigo[it.codigo]['N° de veces'] += 1;
+    porCodigo[it.codigo]['Cantidad reclamada'] += Number(it.cantidad)||0;
+  }));
+  const rankingFilas = Object.values(porCodigo).sort((a,b)=>b['N° de veces']-a['N° de veces']);
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rankingFilas.length?rankingFilas:[{'Sin datos':''}]), 'Ranking Códigos');
+
+  XLSX.writeFile(wb, `Reporte_Dashboard_Postventa_${new Date().toISOString().slice(0,10)}.xlsx`);
+});
 // Panel de reconocimiento — usa los mismos datos que el resto del Dashboard,
 // solo que resaltando quién resuelve más rápido y qué vendedor tiene menos
 // solicitudes con problemas. Queda solo para Admin: son datos de desempeño
