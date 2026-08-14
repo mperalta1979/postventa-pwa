@@ -2142,6 +2142,25 @@ function dashRenderReconocimiento(visibles){
     .sort((a,b)=> a.tasa-b.tasa)
     .slice(0,5);
 
+  // Guías despachadas por operador (de TODAS las guías cargadas, no solo las
+  // que terminaron en reclamo) vs. cuántas de esas terminaron con una
+  // solicitud de Postventa — para ver la tasa real de reclamo por operador,
+  // no solo cuántos reclamos tiene en número absoluto.
+  const guiasPorOperador = {};
+  guiasDatos.forEach(g => {
+    const op = g.operadorGrua || 'Sin dato';
+    guiasPorOperador[op] = (guiasPorOperador[op]||0) + 1;
+  });
+  const solicitudesPorOperador = {};
+  visibles.forEach(r => {
+    const op = r.operadorGrua || 'Sin dato';
+    solicitudesPorOperador[op] = (solicitudesPorOperador[op]||0) + 1;
+  });
+  const rankingOperadores = Object.keys(guiasPorOperador)
+    .map(op => ({ operador:op, guias:guiasPorOperador[op], solicitudes:solicitudesPorOperador[op]||0, tasa:(solicitudesPorOperador[op]||0)/guiasPorOperador[op] }))
+    .sort((a,b)=> b.tasa-a.tasa)
+    .slice(0,8);
+
   cont.innerHTML = `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">
       <div>
@@ -2152,6 +2171,19 @@ function dashRenderReconocimiento(visibles){
         <h3 style="font-size:.85rem;color:var(--navy);margin:0 0 8px;">🎯 Menos solicitudes con problemas (menor % rechazadas, mín. 2 solicitudes)</h3>
         ${rankingVendedores.length ? rankingVendedores.map((v,i)=>`<div class="small-note" style="padding:4px 0;">${i+1}. <strong>${v.vendedor}</strong> — ${fmt(v.tasa*100,0)}% rechazadas (${v.rechazadas} de ${v.total})</div>`).join('') : '<p class="hint">Todavía no hay datos suficientes.</p>'}
       </div>
+    </div>
+    <div style="margin-top:18px;">
+      <h3 style="font-size:.85rem;color:var(--navy);margin:0 0 8px;">🏗️ Guías despachadas vs. Solicitudes Post Venta, por Operador de Grúa</h3>
+      ${rankingOperadores.length ? `
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>Operador de Grúa</th><th>Guías Despachadas</th><th>Solicitudes Post Venta</th><th>Tasa de Reclamo</th></tr></thead>
+            <tbody>
+              ${rankingOperadores.map(o => `<tr><td>${o.operador}</td><td>${o.guias}</td><td>${o.solicitudes}</td><td>${fmt(o.tasa*100,1)}%</td></tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      ` : '<p class="hint">Todavía no hay guías cargadas.</p>'}
     </div>
   `;
 }
