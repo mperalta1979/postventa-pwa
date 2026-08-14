@@ -570,15 +570,15 @@ const JSONBIN_ANTERIOR_KEY = '$2a$10$U8z6AIOUslgzJvlVPbY/0e4AUgRBHFEpSQ0odo6LP.7
 // LIMITE_ADJUNTO_BYTES más abajo).
 const CLOUDINARY_CLOUD_NAME = 'nasqd2m5';
 const CLOUDINARY_UPLOAD_PRESET = 'postventa_pwa';
-// Canal de ntfy.sh para avisos push fuera de la app — hoy solo se usa para
-// solicitudes ingresadas fuera del plazo legal de 90 días.
+// Canales de ntfy.sh para avisos push fuera de la app.
 const NTFY_TOPIC_PLAZO90 = 'postventa-plazo90-9wmzp3';
-async function enviarAlertaNtfy(titulo, mensaje){
+const NTFY_TOPIC_NUEVA_SOLICITUD = 'postventa-nuevasolicitud-petro';
+async function enviarAlertaNtfy(topic, titulo, mensaje){
   try{
     await fetch('https://ntfy.sh/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ topic: NTFY_TOPIC_PLAZO90, title: titulo, message: mensaje, priority: 4, tags: ['warning','alarm_clock'] })
+      body: JSON.stringify({ topic, title: titulo, message: mensaje, priority: 4, tags: ['warning','alarm_clock'] })
     });
   }catch(e){ console.warn('No se pudo enviar la alerta a ntfy:', e); }
 }
@@ -1448,10 +1448,11 @@ async function enviarSolicitud(){
   await dbGuardarReclamo(nuevoReclamo);
   await dbGuardarConfig();
   crearNotificacion('ADMIN', 'nueva_solicitud', `Nueva solicitud ${nuevoReclamo.numero} de ${usuarioActual} (NV ${nuevoReclamo.nv}).`, nuevoReclamo.id);
+  enviarAlertaNtfy(NTFY_TOPIC_NUEVA_SOLICITUD, 'Nueva solicitud - Post Venta', `${usuarioActual} ingresó la solicitud ${nuevoReclamo.numero} (NV ${nuevoReclamo.nv}) — Cliente: ${nuevoReclamo.cliente||'sin dato'}.`);
   if(fueraDePlazo){
     const mensajeFueraPlazo = `${usuarioActual} ingresó la solicitud ${nuevoReclamo.numero} (NV ${nuevoReclamo.nv}) con la guía fuera del plazo legal — tiene ${diasGuia} días (máximo ${PLAZO_LEGAL_DIAS}).`;
     crearNotificacion('ADMIN', 'fuera_de_plazo', `⏰ ${mensajeFueraPlazo}`, nuevoReclamo.id);
-    enviarAlertaNtfy('Solicitud fuera de plazo - Post Venta', mensajeFueraPlazo);
+    enviarAlertaNtfy(NTFY_TOPIC_PLAZO90, 'Solicitud fuera de plazo - Post Venta', mensajeFueraPlazo);
   }
   document.getElementById('resultadoBusquedaNV').innerHTML = '';
   document.getElementById('buscarNVInput').value = '';
@@ -2253,24 +2254,51 @@ function dashRenderReconocimiento(visibles){
     .sort((a,b)=> a.tasa-b.tasa)
     .slice(0,5);
 
-  // Guías despachadas por operador (de TODAS las guías cargadas, no solo las
-  // que terminaron en reclamo) vs. cuántas de esas terminaron con una
-  // solicitud de Postventa — para ver la tasa real de reclamo por operador,
-  // no solo cuántos reclamos tiene en número absoluto.
-  const guiasPorOperador = {};
-  guiasDatos.forEach(g => {
-    const op = g.operadorGrua || 'Sin dato';
-    guiasPorOperador[op] = (guiasPorOperador[op]||0) + 1;
-  });
-  const solicitudesPorOperador = {};
-  visibles.forEach(r => {
-    const op = r.operadorGrua || 'Sin dato';
-    solicitudesPorOperador[op] = (solicitudesPorOperador[op]||0) + 1;
-  });
-  const rankingOperadores = Object.keys(guiasPorOperador)
-    .map(op => ({ operador:op, guias:guiasPorOperador[op], solicitudes:solicitudesPorOperador[op]||0, tasa:(solicitudesPorOperador[op]||0)/guiasPorOperador[op] }))
-    .sort((a,b)=> b.tasa-a.tasa)
-    .slice(0,8);
+  // Guías despachadas vs. solicitudes recibidas, con Acumulado (todo el
+  // histórico, sin importar el filtro de período de arriba) y Mes en Curso
+  // — para Operador, Vendedor y Cliente, que sí tienen guías propias con las
+  // que comparar. Motivo y Tipo de Reclamo no existen a nivel de guía (solo
+  // aparecen cuando ya hay un reclamo), así que esos dos solo muestran
+  // cantidad de solicitudes, sin tasa.
+  const hoy = new Date();
+  const inicioMes = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
+  const todasVisiblesReal = reclamosPostventa.filter(puedeVerReclamo);
+  const visiblesMes = todasVisiblesReal.filter(r => new Date(r.fecha) >= inicioMes);
+
+  function tablaConGuias(campoGuia, campoReclamo){
+    const guiasA = {}, guiasM = {};
+    guiasDatos.forEach(g => {
+      const k = (g[campoGuia]||'').toString().trim() || 'Sin dato';
+      guiasA[k] = (guiasA[k]||0)+1;
+      if(g.fecha && new Date(g.fecha) >= inicioMes) guiasM[k] = (guiasM[k]||0)+1;
+    });
+    const solA = dashContarPor(todasVisiblesReal, campoReclamo);
+    const solM = dashContarPor(visiblesMes, campoReclamo);
+    return Object.keys(guiasA)
+      .map(k => ({ nombre:k, guiasA:guiasA[k]||0, solA:solA[k]||0, tasaA: guiasA[k]?(solA[k]||0)/guiasA[k]*100:null,
+                              guiasM:guiasM[k]||0, solM:solM[k]||0, tasaM: guiasM[k]?(solM[k]||0)/guiasM[k]*100:null }))
+      .sort((a,b)=> (b.tasaA||0)-(a.tasaA||0)).slice(0,10);
+  }
+  function tablaSinGuias(funcionContar){
+    const solA = funcionContar(todasVisiblesReal);
+    const solM = funcionContar(visiblesMes);
+    const claves = new Set([...Object.keys(solA), ...Object.keys(solM)]);
+    return [...claves].map(k => ({ nombre:k, solA:solA[k]||0, solM:solM[k]||0 })).sort((a,b)=>b.solA-a.solA).slice(0,10);
+  }
+  function htmlTablaConGuias(titulo, filas){
+    if(!filas.length) return '<p class="hint">Todavía no hay guías cargadas.</p>';
+    return `<div class="table-scroll"><table>
+      <thead><tr><th>${titulo}</th><th>Guías Despachadas</th><th>Solicitudes Post Venta</th><th>Tasa de Reclamo</th><th>Guías Mes en Curso</th><th>Solicitudes Mes en Curso</th><th>Tasa Mes en Curso</th></tr></thead>
+      <tbody>${filas.map(f=>`<tr><td>${f.nombre}</td><td>${f.guiasA}</td><td>${f.solA}</td><td>${f.tasaA!==null?fmt(f.tasaA,1)+'%':'-'}</td><td>${f.guiasM}</td><td>${f.solM}</td><td>${f.tasaM!==null?fmt(f.tasaM,1)+'%':'-'}</td></tr>`).join('')}</tbody>
+    </table></div>`;
+  }
+  function htmlTablaSinGuias(titulo, filas){
+    if(!filas.length) return '<p class="hint">Todavía no hay datos.</p>';
+    return `<div class="table-scroll"><table>
+      <thead><tr><th>${titulo}</th><th>Cantidad Acumulada</th><th>Cantidad Mes en Curso</th></tr></thead>
+      <tbody>${filas.map(f=>`<tr><td>${f.nombre}</td><td>${f.solA}</td><td>${f.solM}</td></tr>`).join('')}</tbody>
+    </table></div>`;
+  }
 
   cont.innerHTML = `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">
@@ -2283,18 +2311,26 @@ function dashRenderReconocimiento(visibles){
         ${rankingVendedores.length ? rankingVendedores.map((v,i)=>`<div class="small-note" style="padding:4px 0;">${i+1}. <strong>${v.vendedor}</strong> — ${fmt(v.tasa*100,0)}% rechazadas (${v.rechazadas} de ${v.total})</div>`).join('') : '<p class="hint">Todavía no hay datos suficientes.</p>'}
       </div>
     </div>
-    <div style="margin-top:18px;">
+    <p class="hint" style="margin-top:18px;">Las tablas de abajo muestran siempre el Acumulado de todo el histórico y el Mes en Curso, sin importar el filtro de período de arriba.</p>
+    <div style="margin-top:10px;">
       <h3 style="font-size:.85rem;color:var(--navy);margin:0 0 8px;">🏗️ Guías despachadas vs. Solicitudes Post Venta, por Operador de Grúa</h3>
-      ${rankingOperadores.length ? `
-        <div class="table-scroll">
-          <table>
-            <thead><tr><th>Operador de Grúa</th><th>Guías Despachadas</th><th>Solicitudes Post Venta</th><th>Tasa de Reclamo</th></tr></thead>
-            <tbody>
-              ${rankingOperadores.map(o => `<tr><td>${o.operador}</td><td>${o.guias}</td><td>${o.solicitudes}</td><td>${fmt(o.tasa*100,1)}%</td></tr>`).join('')}
-            </tbody>
-          </table>
-        </div>
-      ` : '<p class="hint">Todavía no hay guías cargadas.</p>'}
+      ${htmlTablaConGuias('Operador de Grúa', tablaConGuias('operadorGrua','operadorGrua'))}
+    </div>
+    <div style="margin-top:18px;">
+      <h3 style="font-size:.85rem;color:var(--navy);margin:0 0 8px;">🧑‍💼 Guías despachadas vs. Solicitudes Post Venta, por Vendedor</h3>
+      ${htmlTablaConGuias('Vendedor', tablaConGuias('vendedor','vendedor'))}
+    </div>
+    <div style="margin-top:18px;">
+      <h3 style="font-size:.85rem;color:var(--navy);margin:0 0 8px;">🏢 Guías despachadas vs. Solicitudes Post Venta, por Cliente</h3>
+      ${htmlTablaConGuias('Cliente', tablaConGuias('cliente','cliente'))}
+    </div>
+    <div style="margin-top:18px;">
+      <h3 style="font-size:.85rem;color:var(--navy);margin:0 0 8px;">📋 Solicitudes Post Venta, por Motivo</h3>
+      ${htmlTablaSinGuias('Motivo', tablaSinGuias(dashContarPorMotivo))}
+    </div>
+    <div style="margin-top:18px;">
+      <h3 style="font-size:.85rem;color:var(--navy);margin:0 0 8px;">🏷️ Solicitudes Post Venta, por Tipo de Reclamo</h3>
+      ${htmlTablaSinGuias('Tipo de Reclamo', tablaSinGuias(l => dashContarPor(l,'tipoReclamo')))}
     </div>
   `;
 }
