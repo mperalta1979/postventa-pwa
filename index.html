@@ -776,15 +776,11 @@ function crearNotificacion(para, tipo, mensaje, reclamoId){
 // Firestore en minutos.
 async function dbCargarTodo(incluirCatalogos){
   try{
-    const promesas = [
-      db.collection('postventa').doc('config').get(),
-      db.collection('reclamos').get(),
-      db.collection('notificaciones').get()
-    ];
+    const promesas = [ db.collection('postventa').doc('config').get() ];
     if(incluirCatalogos){
       promesas.push(db.collection('guias').get(), db.collection('clientes').get());
     }
-    const [configSnap, reclamosSnap, notifSnap, guiasSnap, clientesSnap] = await Promise.all(promesas);
+    const [configSnap, guiasSnap, clientesSnap] = await Promise.all(promesas);
     if(configSnap.exists){
       const data = configSnap.data();
       if(data.cuentas) cuentas = data.cuentas;
@@ -806,8 +802,6 @@ async function dbCargarTodo(incluirCatalogos){
         });
       });
     }
-    reclamosPostventa = reclamosSnap.docs.map(d => d.data());
-    notificaciones = notifSnap.docs.map(d => d.data());
     if(incluirCatalogos){
       guiasDatos = guiasSnap.docs.map(d => d.data());
       clientesDatos = {};
@@ -816,13 +810,31 @@ async function dbCargarTodo(incluirCatalogos){
     return true;
   }catch(e){ console.warn('No se pudo cargar datos de Firestore:', e); return false; }
 }
+// Solicitudes y Notificaciones se mantienen en vivo con onSnapshot: Firestore
+// avisa a la app apenas algo cambia (casi al instante), en vez de tener que
+// preguntar cada 30 segundos si hay algo nuevo — así una solicitud que
+// ingresa otra persona aparece sola, sin recargar la página.
+let unsubscribeReclamos = null, unsubscribeNotificaciones = null;
+function iniciarListenersEnVivo(){
+  if(unsubscribeReclamos) return; // ya están corriendo, no duplicar
+  unsubscribeReclamos = db.collection('reclamos').onSnapshot(snap => {
+    reclamosPostventa = snap.docs.map(d => d.data());
+    if(usuarioActual && !edicionInlineAbierta) renderTodo();
+  }, err => console.warn('Se cortó la conexión en vivo de reclamos, seguirá reintentando sola:', err));
+  unsubscribeNotificaciones = db.collection('notificaciones').onSnapshot(snap => {
+    notificaciones = snap.docs.map(d => d.data());
+    if(usuarioActual) renderNotifBadge();
+  }, err => console.warn('Se cortó la conexión en vivo de notificaciones, seguirá reintentando sola:', err));
+}
 // Mientras el usuario tiene abierto un formulario en línea (Completar
 // solicitud, Editar rechazada), el refresco automático de abajo NO debe
 // reconstruir las listas — si no, a mitad de camino le borra lo que estaba
 // escribiendo. Se sigue trayendo la info fresca igual, solo se posterga
 // el repintado hasta que cierre el formulario.
 let edicionInlineAbierta = false;
-setInterval(async () => { if(usuarioActual){ await dbCargarTodo(false); if(!edicionInlineAbierta) renderTodo(); renderNotifBadge(); } }, 30000);
+// Config (roles, usuarios, motivos, etc.) cambia poco — con revisarla cada
+// 30 segundos alcanza, no hace falta tiempo real para eso.
+setInterval(async () => { if(usuarioActual){ await dbCargarTodo(false); if(!edicionInlineAbierta) renderTodo(); } }, 30000);
 
 // ==================== Migración única desde jsonbin ====================
 // Trae lo que estaba guardado en el sistema anterior y lo sube a Firestore
@@ -3264,6 +3276,7 @@ async function sembrarCuentasVendedores(){
     return;
   }
   await dbCargarTodo(true);
+  iniciarListenersEnVivo();
   await bootstrapAdmin();
   await sembrarCuentasVendedores();
   await sembrarMotivosPorDefecto();
