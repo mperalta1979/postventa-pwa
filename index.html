@@ -1739,8 +1739,8 @@ function renderHistorial(){
     <td data-etiqueta="Cliente">${r.cliente||'-'}</td><td data-etiqueta="Solicitante">${r.usuarioSolicitante}</td><td data-etiqueta="Tipo">${TIPO_RECLAMO_LABEL[r.tipoReclamo] || r.tipoReclamo}</td>
     <td data-etiqueta="Estado"><span class="pill ${ESTADO_RECLAMO_PILL[r.estado]}">${etiquetaEstado(r.estado)}</span></td>
     <td data-etiqueta="Motivo Rechazo">${r.estado==='rechazado' ? (r.notaRevision||'-') : '-'}</td>
-    <td data-etiqueta="N° Sol. Nota Crédito">${tienePermiso('cerrarSolicitudes') ? `<input type="text" value="${(r.numeroNotaCredito||'').replace(/"/g,'&quot;')}" style="width:100px;" onchange="actualizarNumeroSolicitudNC('${r.id}', this.value)">` : (r.numeroNotaCredito||'-')}</td>
-    <td data-etiqueta="Número de NC">${tienePermiso('cerrarSolicitudes') ? `<input type="text" value="${(r.numeroNC||'').replace(/"/g,'&quot;')}" style="width:100px;" onchange="actualizarNumeroNC('${r.id}', this.value)">` : (r.numeroNC||'-')}</td>
+    <td data-etiqueta="N° Sol. Nota Crédito">${esAdmin() ? `<input type="text" value="${(r.numeroNotaCredito||'').replace(/"/g,'&quot;')}" style="width:100px;" onchange="actualizarNumeroSolicitudNC('${r.id}', this.value)">` : (r.numeroNotaCredito||'-')}</td>
+    <td data-etiqueta="Número de NC">${esAdmin() ? `<input type="text" value="${(r.numeroNC||'').replace(/"/g,'&quot;')}" style="width:100px;" onchange="actualizarNumeroNC('${r.id}', this.value)">` : (r.numeroNC||'-')}</td>
     <td data-etiqueta="Acciones">
       <button class="btn secondary" style="padding:4px 8px;font-size:.72rem;" onclick="verDetalleHistorial('${r.id}')">Ver</button>
       ${tienePermiso('editarRechazadas') && r.estado==='rechazado' ? `<button class="btn secondary" style="padding:4px 8px;font-size:.72rem;" onclick="abrirEdicionReclamo('${r.id}')">Editar</button>` : ''}
