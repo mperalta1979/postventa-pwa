@@ -544,6 +544,10 @@ let clientesDatos = {}; // { [codAux]: {codAux, nombre, rut, direccion, comuna, 
 let reclamosPostventa = [];
 let notificaciones = []; // [{id, para: usuario|'ADMIN', tipo, mensaje, reclamoId, leida, fecha}]
 let reclamoContador = 0;
+// Evita que un doble clic/doble toque en "Enviar solicitud" genere dos
+// reclamos idénticos: mientras una solicitud se está guardando, cualquier
+// otra pulsación del mismo botón se ignora.
+let enviandoSolicitud = false;
 let maestroMotivosReclamo = []; // [{id, motivo}]
 let maestroTiposReclamo = []; // [{id, tipo}]
 // Config de Firebase del proyecto "postventa-pwa" — es seguro que esté visible
@@ -661,6 +665,27 @@ async function dbGuardarConfig(){
     await db.collection('postventa').doc('config').set({ cuentas, reclamoContador, maestroMotivosReclamo, maestroTiposReclamo, roles });
     return true;
   }catch(e){ console.warn('No se pudo guardar la configuración en Firestore:', e); return false; }
+}
+// Entrega el próximo número de REC de forma atómica: lee y suma 1 a
+// reclamoContador dentro de una transacción de Firestore, que garantiza que
+// esa lectura+escritura ocurra como una sola operación indivisible. Así, aun
+// cuando dos sesiones (dos pestañas, dos celulares, dos usuarios) envíen una
+// solicitud casi al mismo instante, Firestore obliga a que una espere a la
+// otra — nunca pueden leer el mismo valor de partida ni terminar con el
+// mismo número de REC. Esto reemplaza al viejo "reclamoContador += 1" local,
+// que sí podía duplicarse porque cada sesión guardaba su copia en memoria y
+// recién la escribía en Firestore después de crear el reclamo.
+async function dbSiguienteNumeroReclamo(){
+  const ref = db.collection('postventa').doc('config');
+  const nuevoValor = await db.runTransaction(async (tx) => {
+    const doc = await tx.get(ref);
+    const actual = (doc.exists && doc.data().reclamoContador) || 0;
+    const siguiente = actual + 1;
+    tx.update(ref, { reclamoContador: siguiente });
+    return siguiente;
+  });
+  reclamoContador = nuevoValor; // mantiene también al día la copia local
+  return nuevoValor;
 }
 // Actualiza SOLO un campo puntual del documento de configuración (ej.
 // "roles.gestionador" o "cuentas.jperez"), en vez de reescribir todo el
@@ -1434,42 +1459,60 @@ async function enviarSolicitud(){
   // al elegir la guía — acá solo se usa esa respuesta para marcar la
   // solicitud, sin volver a preguntar lo mismo dos veces.
   const posibleDuplicado = !!window.__duplicadoConfirmadoEnBusqueda;
-  let archivos;
-  try{ archivos = await leerArchivosAdjuntos(document.getElementById('archivoReclamo'), MAX_ADJUNTOS_POR_SOLICITUD); }catch(e){ return; }
-  if(archivos.length){ status.textContent = 'Subiendo adjuntos...'; archivos = await subirAdjuntosSiCorresponde(archivos); }
-  const items = idxs.map(idx => {
-    const l = ctx.data.lineas[idx];
-    const cantInput = document.querySelector(`.cantidadReclamadaNV[data-idx="${idx}"]`);
-    return { codigo:l.codigo, descripcion:l.descripcion||'', cantidadDespachada: Number(l.cantidad)||0, cantidad: parseFloat(cantInput.value)||0, motivo: motivosPorLinea[idx], precioUnitario: Number(l.precioUnitario)||0 };
-  });
-  reclamoContador += 1;
-  const nuevoReclamo = {
-    id: `${Date.now()}_${Math.random().toString(36).slice(2,8)}`,
-    numero: `REC-${String(reclamoContador).padStart(3,'0')}`,
-    fecha: new Date().toISOString(),
-    usuarioSolicitante: usuarioActual,
-    nv: ctx.nv, cliente: ctx.data.cliente||'', vendedor: ctx.data.vendedor||'',
-    guiaFolio: ctx.guia.folio||'', factura: ctx.guia.factura||'', patente: ctx.guia.patente||'', retiradoPor: ctx.guia.retiradoPor||'', operadorGrua: ctx.guia.operadorGrua||'',
-    items, tipoReclamo, motivo: observaciones, archivos, posibleDuplicado, fueraDePlazo,
-    estado:'pendiente', revisadoPor:null, fechaRevision:null, notaRevision:'',
-    numeroNotaCredito:'', numeroNC:'', fechaCierre:null, usuarioCierre:null,
-    eventos: [{ tipo:'creada', usuario: usuarioActual, fecha: new Date().toISOString(), comentario: fueraDePlazo ? `Ingresada fuera del plazo legal (guía con ${diasGuia} días)` : '' }]
-  };
-  reclamosPostventa.push(nuevoReclamo);
-  status.textContent = 'Guardando...';
-  await dbGuardarReclamo(nuevoReclamo);
-  await dbGuardarConfig();
-  crearNotificacion('ADMIN', 'nueva_solicitud', `Nueva solicitud ${nuevoReclamo.numero} de ${usuarioActual} (NV ${nuevoReclamo.nv}).`, nuevoReclamo.id);
-  enviarAlertaNtfy(NTFY_TOPIC_NUEVA_SOLICITUD, 'Nueva solicitud - Post Venta', `${usuarioActual} ingresó la solicitud ${nuevoReclamo.numero} (NV ${nuevoReclamo.nv}) — Cliente: ${nuevoReclamo.cliente||'sin dato'}.`);
-  if(fueraDePlazo){
-    const mensajeFueraPlazo = `${usuarioActual} ingresó la solicitud ${nuevoReclamo.numero} (NV ${nuevoReclamo.nv}) con la guía fuera del plazo legal — tiene ${diasGuia} días (máximo ${PLAZO_LEGAL_DIAS}).`;
-    crearNotificacion('ADMIN', 'fuera_de_plazo', `⏰ ${mensajeFueraPlazo}`, nuevoReclamo.id);
-    enviarAlertaNtfy(NTFY_TOPIC_PLAZO90, 'Solicitud fuera de plazo - Post Venta', mensajeFueraPlazo);
+  // A partir de acá la solicitud ya pasó todas las validaciones y se va a
+  // guardar de verdad — se bloquea el botón para que un doble clic/doble
+  // toque no dispare un segundo envío idéntico mientras este todavía está
+  // en curso.
+  if(enviandoSolicitud) return;
+  enviandoSolicitud = true;
+  const btnEnviar = document.getElementById('btnEnviarReclamo');
+  if(btnEnviar) btnEnviar.disabled = true;
+  try{
+    let archivos;
+    try{ archivos = await leerArchivosAdjuntos(document.getElementById('archivoReclamo'), MAX_ADJUNTOS_POR_SOLICITUD); }catch(e){ return; }
+    if(archivos.length){ status.textContent = 'Subiendo adjuntos...'; archivos = await subirAdjuntosSiCorresponde(archivos); }
+    const items = idxs.map(idx => {
+      const l = ctx.data.lineas[idx];
+      const cantInput = document.querySelector(`.cantidadReclamadaNV[data-idx="${idx}"]`);
+      return { codigo:l.codigo, descripcion:l.descripcion||'', cantidadDespachada: Number(l.cantidad)||0, cantidad: parseFloat(cantInput.value)||0, motivo: motivosPorLinea[idx], precioUnitario: Number(l.precioUnitario)||0 };
+    });
+    status.textContent = 'Guardando...';
+    // Número de REC asignado por transacción de Firestore — ver
+    // dbSiguienteNumeroReclamo() para el porqué (evita duplicados aunque
+    // dos sesiones envíen casi al mismo instante).
+    const numeroReclamo = await dbSiguienteNumeroReclamo();
+    const nuevoReclamo = {
+      id: `${Date.now()}_${Math.random().toString(36).slice(2,8)}`,
+      numero: `REC-${String(numeroReclamo).padStart(3,'0')}`,
+      fecha: new Date().toISOString(),
+      usuarioSolicitante: usuarioActual,
+      nv: ctx.nv, cliente: ctx.data.cliente||'', vendedor: ctx.data.vendedor||'',
+      guiaFolio: ctx.guia.folio||'', factura: ctx.guia.factura||'', patente: ctx.guia.patente||'', retiradoPor: ctx.guia.retiradoPor||'', operadorGrua: ctx.guia.operadorGrua||'',
+      items, tipoReclamo, motivo: observaciones, archivos, posibleDuplicado, fueraDePlazo,
+      estado:'pendiente', revisadoPor:null, fechaRevision:null, notaRevision:'',
+      numeroNotaCredito:'', numeroNC:'', fechaCierre:null, usuarioCierre:null,
+      eventos: [{ tipo:'creada', usuario: usuarioActual, fecha: new Date().toISOString(), comentario: fueraDePlazo ? `Ingresada fuera del plazo legal (guía con ${diasGuia} días)` : '' }]
+    };
+    reclamosPostventa.push(nuevoReclamo);
+    await dbGuardarReclamo(nuevoReclamo);
+    crearNotificacion('ADMIN', 'nueva_solicitud', `Nueva solicitud ${nuevoReclamo.numero} de ${usuarioActual} (NV ${nuevoReclamo.nv}).`, nuevoReclamo.id);
+    enviarAlertaNtfy(NTFY_TOPIC_NUEVA_SOLICITUD, 'Nueva solicitud - Post Venta', `${usuarioActual} ingresó la solicitud ${nuevoReclamo.numero} (NV ${nuevoReclamo.nv}) — Cliente: ${nuevoReclamo.cliente||'sin dato'}.`);
+    if(fueraDePlazo){
+      const mensajeFueraPlazo = `${usuarioActual} ingresó la solicitud ${nuevoReclamo.numero} (NV ${nuevoReclamo.nv}) con la guía fuera del plazo legal — tiene ${diasGuia} días (máximo ${PLAZO_LEGAL_DIAS}).`;
+      crearNotificacion('ADMIN', 'fuera_de_plazo', `⏰ ${mensajeFueraPlazo}`, nuevoReclamo.id);
+      enviarAlertaNtfy(NTFY_TOPIC_PLAZO90, 'Solicitud fuera de plazo - Post Venta', mensajeFueraPlazo);
+    }
+    document.getElementById('resultadoBusquedaNV').innerHTML = '';
+    document.getElementById('buscarNVInput').value = '';
+    renderPendientes();
+    alert('Solicitud recibida, tiempo de respuesta 1 a 5 dia habiles, revise pestaña En revision');
+  }catch(e){
+    console.warn('No se pudo enviar la solicitud:', e);
+    status.textContent = 'No se pudo guardar la solicitud (revise su conexión) — intente nuevamente.';
+    if(btnEnviar) btnEnviar.disabled = false;
+  }finally{
+    enviandoSolicitud = false;
   }
-  document.getElementById('resultadoBusquedaNV').innerHTML = '';
-  document.getElementById('buscarNVInput').value = '';
-  renderPendientes();
-  alert('Solicitud recibida, tiempo de respuesta 1 a 5 dia habiles, revise pestaña En revision');
 }
 
 // ==================== Gestionar / reemplazar adjuntos ====================
