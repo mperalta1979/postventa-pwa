@@ -131,6 +131,35 @@
     #tab-historial table td:empty{display:none;}
     #tab-historial table td::before{content:attr(data-etiqueta);display:block;font-size:.68rem;color:var(--muted);font-weight:600;text-transform:uppercase;}
   }
+  /* ---------- Tutorial de bienvenida ---------- */
+  #tutOverlay{position:fixed;inset:0;background:rgba(15,30,55,.62);z-index:500;display:none;align-items:center;justify-content:center;padding:16px;}
+  #tutOverlay.abierto{display:flex;}
+  .tut-card{background:#fff;border-radius:16px;width:100%;max-width:520px;max-height:92vh;display:flex;flex-direction:column;box-shadow:0 14px 44px rgba(0,0,0,.32);overflow:hidden;}
+  .tut-top{display:flex;justify-content:space-between;align-items:center;padding:14px 20px 0;}
+  .tut-etapa{font-size:.74rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:#5b9bd5;}
+  .tut-cerrar{background:none;border:none;font-size:1.3rem;line-height:1;color:var(--muted);cursor:pointer;padding:4px 8px;border-radius:6px;}
+  .tut-cerrar:hover{background:#eef4fa;}
+  .tut-body{padding:6px 28px 8px;overflow-y:auto;text-align:center;}
+  .tut-icono{font-size:2.6rem;margin-top:6px;}
+  .tut-body h3{color:var(--navy);margin:8px 0 8px;font-size:1.2rem;}
+  .tut-body p{font-size:.94rem;line-height:1.5;margin:0 0 10px;text-align:left;}
+  .tut-ruta{display:inline-block;background:#eef4fa;border:1px solid var(--border);color:var(--navy);font-size:.8rem;padding:4px 10px;border-radius:6px;margin:0 0 10px;}
+  .tut-opc{display:inline-block;vertical-align:middle;margin-left:6px;font-size:.68rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase;background:var(--warn-bg);color:var(--warn);border:1px solid #e6cf8a;border-radius:999px;padding:2px 8px;}
+  .tut-lista{text-align:left;font-size:.9rem;line-height:1.5;margin:0 0 10px;padding-left:20px;}
+  .tut-lista li{margin-bottom:4px;}
+  .tut-aviso{text-align:left;background:var(--warn-bg);color:#6b4f00;border-left:4px solid var(--warn);border-radius:6px;padding:9px 12px;font-size:.86rem;line-height:1.45;margin-bottom:10px;}
+  .tut-flujo{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:6px;margin:4px 0 12px;font-size:.8rem;}
+  .tut-flujo .paso{background:#eef4fa;border:1px solid var(--border);color:var(--navy);padding:5px 10px;border-radius:999px;}
+  .tut-flujo .flecha{color:var(--muted);}
+  .tut-pie{padding:12px 20px 18px;border-top:1px solid #eef2f6;}
+  .tut-puntos{display:flex;justify-content:center;gap:6px;margin-bottom:12px;}
+  .tut-puntos i{width:8px;height:8px;border-radius:50%;background:#cfdceb;display:block;}
+  .tut-puntos i.on{background:var(--navy);width:20px;border-radius:4px;}
+  .tut-nomas{display:flex;align-items:center;justify-content:center;gap:8px;font-size:.86rem;color:var(--text);margin-bottom:12px;cursor:pointer;user-select:none;}
+  .tut-nomas input{width:17px;height:17px;accent-color:var(--navy);cursor:pointer;}
+  .tut-botones{display:flex;justify-content:space-between;gap:10px;}
+  .tut-botones .btn{flex:1;}
+  @media (max-width:480px){ .tut-body{padding:6px 18px 8px;} }
 </style>
 </head>
 <body>
@@ -173,6 +202,7 @@
         <div id="notifPanel" style="display:none;position:absolute;right:0;top:calc(100% + 6px);width:340px;max-height:420px;overflow-y:auto;background:#fff;border:1px solid var(--border);border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.15);z-index:80;padding:6px;"></div>
       </div>
       <span id="usuarioActualLbl"></span>
+      <button class="btn secondary" id="btnAyudaTutorial" title="Ver el tutorial de la app">❓ Ayuda</button>
       <button class="btn secondary" id="btnCerrarSesion">Cerrar sesión</button>
     </div>
   </header>
@@ -523,13 +553,20 @@
   </main>
 </div>
 
-<div id="tourOverlay" style="display:none;position:fixed;inset:0;background:rgba(15,30,55,.6);z-index:500;align-items:center;justify-content:center;">
-  <div style="background:#fff;border-radius:14px;max-width:440px;width:90%;padding:28px;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,.3);">
-    <div id="tourPaso"></div>
-    <div class="row" style="justify-content:center;margin-top:18px;gap:10px;">
-      <button class="btn secondary" id="btnTourAnterior">Anterior</button>
-      <button class="btn secondary" id="btnTourSaltar">Saltar</button>
-      <button class="btn" id="btnTourSiguiente">Siguiente</button>
+<div id="tutOverlay" role="dialog" aria-modal="true" aria-labelledby="tutTitulo">
+  <div class="tut-card">
+    <div class="tut-top">
+      <span class="tut-etapa" id="tutEtapa"></span>
+      <button class="tut-cerrar" id="tutX" title="Cerrar">✕</button>
+    </div>
+    <div class="tut-body" id="tutCuerpo"></div>
+    <div class="tut-pie">
+      <div class="tut-puntos" id="tutPuntos"></div>
+      <label class="tut-nomas"><input type="checkbox" id="tutNoMostrar"> No volver a mostrar este tutorial al ingresar</label>
+      <div class="tut-botones">
+        <button class="btn secondary" id="tutAnterior">Anterior</button>
+        <button class="btn" id="tutSiguiente">Siguiente</button>
+      </div>
     </div>
   </div>
 </div>
@@ -1021,42 +1058,131 @@ function entrarApp(){
   renderTodo();
   mostrarTourSiCorresponde();
 }
-// ==================== Recorrido de bienvenida (primera vez) ====================
-const TOUR_PASOS = [
-  { icono:'👋', titulo:'¡Bienvenido a Post Venta PWA!', texto:'Un recorrido rápido antes de empezar — toma 30 segundos.' },
-  { icono:'📝', titulo:'Nueva Solicitud', texto:'Busca la Guía, NV o Factura del cliente, marca los códigos con problema, y envía — queda en "Solicitudes ▾ → Pendientes" esperando revisión.' },
-  { icono:'🔍', titulo:'Buscador de arriba', texto:'Escribe cualquier N° de Solicitud, Guía, NV o Factura ahí arriba a la izquierda y te lleva directo a lo que buscas.' },
-  { icono:'🔔', titulo:'Notificaciones', texto:'La campanita te avisa cuando tu solicitud es recibida, queda incompleta, o es rechazada — haz clic en el aviso para ir directo a ella.' },
-  { icono:'🕒', titulo:'Línea de Tiempo', texto:'En "Solicitudes ▾ → Línea de Tiempo" puedes revisar el avance paso a paso de cualquier solicitud tuya.' }
-];
-let tourIndice = 0;
-function renderPasoTour(){
-  const p = TOUR_PASOS[tourIndice];
-  document.getElementById('tourPaso').innerHTML = `
-    <div style="font-size:2.4rem;">${p.icono}</div>
-    <h3 style="color:var(--navy);margin:10px 0 6px;">${p.titulo}</h3>
-    <p style="color:var(--text);font-size:.92rem;">${p.texto}</p>
-    <div class="small-note" style="margin-top:10px;">${tourIndice+1} de ${TOUR_PASOS.length}</div>`;
-  document.getElementById('btnTourAnterior').style.visibility = tourIndice===0 ? 'hidden' : 'visible';
-  document.getElementById('btnTourSiguiente').textContent = tourIndice===TOUR_PASOS.length-1 ? 'Listo' : 'Siguiente';
+// ==================== Tutorial de bienvenida ====================
+// Aparece al ingresar con usuario y clave, con los pasos que corresponden a
+// lo que ese usuario puede hacer (según sus permisos). El casillero "No volver
+// a mostrar" se guarda POR USUARIO en Firestore (cuentas.<usuario>.ocultarTutorial),
+// así vale en cualquier celular o computador. El botón ❓ Ayuda lo abre siempre.
+const TUTORIAL_PASOS = {
+  bienvenida: { etapa:'Bienvenida', icono:'👋', titulo:'¡Bienvenido a Post Venta!',
+    html:`<p>En un minuto te mostramos cómo ingresar un reclamo y cómo seguirlo hasta que se cierra.</p>
+          <p class="hint" style="text-align:center;">Puedes volver a ver esta guía cuando quieras con el botón <strong>❓ Ayuda</strong>, arriba a la derecha.</p>` },
+  nueva: { etapa:'Ingresar un reclamo', icono:'📝', titulo:'Nueva Solicitud',
+    html:`<span class="tut-ruta">Solicitudes ▾ → Nueva Solicitud</span>
+          <p>Escribe el N° de <strong>Guía, NV o Factura</strong> del cliente y presiona Buscar.</p>
+          <div class="tut-aviso">Si ya existe una solicitud con ese número, la app te avisa y te muestra el N° de REC para que lo revises antes de continuar.</div>
+          <p class="hint" style="text-align:left;">Solo verás documentos de tu propio vendedor.</p>` },
+  completar: { etapa:'Ingresar un reclamo', icono:'✅', titulo:'Completa el reclamo',
+    html:`<ul class="tut-lista">
+            <li>Marca los <strong>códigos</strong> con problema.</li>
+            <li>Para cada uno elige el <strong>motivo</strong> y la <strong>cantidad reclamada</strong> (pueden ser distintos entre códigos).</li>
+            <li>Elige el <strong>tipo de reclamo</strong> y escribe las <strong>observaciones</strong> (obligatorias).</li>
+            <li>Si quieres, adjunta hasta <strong>3 archivos</strong> (foto, PDF o Excel).</li>
+          </ul>
+          <div class="tut-aviso">Presiona <strong>Enviar</strong> una sola vez y espera el mensaje de confirmación.</div>` },
+  plazo: { etapa:'Ingresar un reclamo', icono:'⏰', titulo:'Plazo legal: 90 días',
+    html:`<p>Solo se pueden ingresar reclamos de guías con <strong>90 días o menos</strong> desde su fecha.</p>
+          <div class="tut-aviso">Si la guía está fuera de plazo, la app no te deja enviarla: contacta al Sub Gerente de Administración.</div>` },
+  seguimiento: { etapa:'Seguimiento', icono:'🔄', titulo:'¿Qué pasa después de enviar?',
+    html:`<div class="tut-flujo"><span class="paso">Pendientes</span><span class="flecha">→</span><span class="paso">En Revisión</span><span class="flecha">→</span><span class="paso">Historial</span></div>
+          <p>Tu solicitud espera respuesta en <strong>Pendientes</strong> (1 a 5 días hábiles), pasa a <strong>En Revisión</strong> cuando es recibida y queda en <strong>Historial</strong> al cerrarse.</p>
+          <div class="tut-aviso">Si la marcan <strong>Recibida/Incompleta</strong>, entra a Pendientes y usa el botón <strong>Completar solicitud</strong>.</div>` },
+  avisos: { etapa:'Seguimiento', icono:'🔔', titulo:'Avisos y búsqueda',
+    html:`<ul class="tut-lista">
+            <li><strong>🔔 Campanita:</strong> te avisa cuando tu solicitud es recibida, queda incompleta o es rechazada. Haz clic en el aviso para ir directo a ella.</li>
+            <li><strong>🔍 Buscador de arriba:</strong> escribe un N° de Solicitud, Guía, NV o Factura y te lleva directo.</li>
+            <li><strong>🕒 Línea de Tiempo</strong> (<em>Solicitudes ▾</em>): revisa el avance paso a paso de cualquier solicitud tuya.</li>
+          </ul>` },
+  consulta: { etapa:'Herramientas · Opcional', icono:'📄', titulo:'Consulta Guías <span class="tut-opc">Opcional</span>',
+    html:`<span class="tut-ruta">Consulta Guías</span>
+          <p>Busca por N° de Guía, NV o Factura para ver el formato completo de la guía de despacho.</p>
+          <div class="tut-aviso">Opcional: esta función está aún en proceso de decisión. Este paso solo se mostraría si finalmente se habilita Consulta Guías para el usuario.</div>` },
+  revisar: { etapa:'Gestión de solicitudes', icono:'📥', titulo:'Revisar las solicitudes',
+    html:`<span class="tut-ruta">Solicitudes ▾ → Solicitudes Pendientes</span>
+          <p>Cada solicitud muestra cuántos días lleva sin respuesta (rojo desde 3 días). Según tus permisos puedes:</p>
+          <ul class="tut-lista">
+            <li><strong>Solicitud Recibida:</strong> pasa a En Revisión.</li>
+            <li><strong>Recibida/Incompleta:</strong> el solicitante debe completarla.</li>
+            <li><strong>Rechazar</strong> con un motivo.</li>
+          </ul>` },
+  cerrar: { etapa:'Gestión de solicitudes', icono:'🧾', titulo:'Cerrar una solicitud',
+    html:`<span class="tut-ruta">Solicitudes ▾ → En Revisión</span>
+          <ul class="tut-lista">
+            <li>Escribe las <strong>conclusiones</strong> de la revisión.</li>
+            <li>Registra el <strong>N° de Solicitud de NC</strong> (el trámite) y, cuando Contabilidad la emite, el <strong>Número de NC</strong>.</li>
+            <li>Cierra la solicitud: pasa al Historial.</li>
+          </ul>
+          <p class="hint" style="text-align:left;">En el Historial puedes buscar por NV, Guía, Factura, Cliente o Producto.</p>` },
+  dashboard: { etapa:'Herramientas', icono:'📊', titulo:'Dashboard',
+    html:`<span class="tut-ruta">Dashboard</span>
+          <p>Resumen de solicitudes por vendedor, cliente, operador, motivo y tipo; cumplimiento de plazos, valor reclamado y evolución mensual.</p>
+          <p>Elige el período y descarga el reporte en Excel.</p>` },
+  maestro: { etapa:'Administración', icono:'🛠️', titulo:'Maestro (solo Administrador)',
+    html:`<span class="tut-ruta">Maestro ▾</span>
+          <ul class="tut-lista">
+            <li><strong>Importar NV / Histórico:</strong> carga las guías y clientes.</li>
+            <li><strong>Usuarios y Roles:</strong> crea cuentas y define qué puede hacer cada rol.</li>
+            <li><strong>Motivos y Tipos de reclamo:</strong> mantiene las listas que ven los usuarios.</li>
+            <li><strong>Sincronización:</strong> estado de la conexión con la base de datos.</li>
+          </ul>` },
+  fin: { etapa:'Listo', icono:'🎉', titulo:'¡Eso es todo!',
+    html:`<p style="text-align:center;">Si tienes dudas, el botón <strong>❓ Ayuda</strong> del encabezado te devuelve a esta guía.</p>
+          <p class="hint" style="text-align:center;">Marca <strong>"No volver a mostrar"</strong> si ya no quieres verla cada vez que ingreses.</p>` }
+};
+function tutorialPasosDelUsuario(){
+  const ids = ['bienvenida','nueva','completar'];
+  if(!tienePermiso('ingresarFueraDePlazo')) ids.push('plazo');
+  ids.push('seguimiento','avisos');
+  if(tienePermiso('aprobarSolicitudes') || tienePermiso('rechazarSolicitudes')) ids.push('revisar');
+  if(tienePermiso('cerrarSolicitudes')) ids.push('cerrar');
+  if(tienePermiso('consultaGuias')) ids.push('consulta');
+  if(tienePermiso('verDashboard')) ids.push('dashboard');
+  if(tienePermiso('accesoMaestro')) ids.push('maestro');
+  ids.push('fin');
+  return ids;
 }
-function cerrarTour(){
-  document.getElementById('tourOverlay').style.display = 'none';
-  try{ localStorage.setItem('postventa_tour_visto_'+usuarioActual, '1'); }catch(e){}
+let tutPasos = [], tutIndice = 0;
+function tutorialDibujar(){
+  const p = TUTORIAL_PASOS[tutPasos[tutIndice]];
+  document.getElementById('tutEtapa').textContent = p.etapa;
+  document.getElementById('tutCuerpo').innerHTML = `<div class="tut-icono">${p.icono}</div><h3 id="tutTitulo">${p.titulo}</h3>${p.html}`;
+  document.getElementById('tutPuntos').innerHTML = tutPasos.map((_,i)=>`<i class="${i===tutIndice?'on':''}"></i>`).join('');
+  document.getElementById('tutAnterior').style.visibility = tutIndice===0 ? 'hidden' : 'visible';
+  document.getElementById('tutSiguiente').textContent = tutIndice===tutPasos.length-1 ? 'Entendido' : 'Siguiente';
+  document.getElementById('tutCuerpo').scrollTop = 0;
+}
+function tutorialAbrir(){
+  if(!usuarioActual) return;
+  tutPasos = tutorialPasosDelUsuario();
+  tutIndice = 0;
+  document.getElementById('tutNoMostrar').checked = !!(cuentas[usuarioActual] && cuentas[usuarioActual].ocultarTutorial);
+  tutorialDibujar();
+  document.getElementById('tutOverlay').classList.add('abierto');
+}
+function tutorialCerrar(){
+  const ov = document.getElementById('tutOverlay');
+  if(!ov.classList.contains('abierto')) return;
+  ov.classList.remove('abierto');
+  const ocultar = document.getElementById('tutNoMostrar').checked;
+  const cuenta = cuentas[usuarioActual];
+  if(cuenta && !!cuenta.ocultarTutorial !== ocultar){
+    cuenta.ocultarTutorial = ocultar;
+    dbActualizarCampoConfig(`cuentas.${usuarioActual}.ocultarTutorial`, ocultar);
+  }
 }
 function mostrarTourSiCorresponde(){
-  let visto = false;
-  try{ visto = localStorage.getItem('postventa_tour_visto_'+usuarioActual) === '1'; }catch(e){}
-  if(visto) return;
-  tourIndice = 0;
-  renderPasoTour();
-  document.getElementById('tourOverlay').style.display = 'flex';
+  const cuenta = cuentas[usuarioActual];
+  if(cuenta && cuenta.ocultarTutorial) return;
+  tutorialAbrir();
 }
-document.getElementById('btnTourSiguiente').addEventListener('click', () => {
-  if(tourIndice < TOUR_PASOS.length-1){ tourIndice++; renderPasoTour(); } else cerrarTour();
+document.getElementById('tutSiguiente').addEventListener('click', () => {
+  if(tutIndice < tutPasos.length-1){ tutIndice++; tutorialDibujar(); } else tutorialCerrar();
 });
-document.getElementById('btnTourAnterior').addEventListener('click', () => { if(tourIndice>0){ tourIndice--; renderPasoTour(); } });
-document.getElementById('btnTourSaltar').addEventListener('click', cerrarTour);
+document.getElementById('tutAnterior').addEventListener('click', () => { if(tutIndice>0){ tutIndice--; tutorialDibujar(); } });
+document.getElementById('tutX').addEventListener('click', tutorialCerrar);
+document.getElementById('tutOverlay').addEventListener('click', (e) => { if(e.target.id==='tutOverlay') tutorialCerrar(); });
+document.getElementById('btnAyudaTutorial').addEventListener('click', tutorialAbrir);
+document.addEventListener('keydown', (e) => { if(e.key==='Escape') tutorialCerrar(); });
 function renderTodo(){
   renderPendientes();
   renderRevision();
