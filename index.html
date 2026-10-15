@@ -762,32 +762,69 @@ async function dbEliminarReclamoRemoto(id){
 // Guías: colección aparte, un documento por folio — evita el problema de
 // tamaño que tenía jsonbin (cada guía pesa muy poco por separado; miles de
 // guías en un solo bloque de texto era lo que hacía fallar la sincronización).
-async function dbReemplazarGuias(lista){
-  try{
-    const actual = await db.collection('guias').get();
-    for(let i=0;i<actual.docs.length;i+=450){
-      const batch = db.batch();
-      actual.docs.slice(i,i+450).forEach(d => batch.delete(d.ref));
-      await batch.commit();
+// Ejecuta un lote de escrituras y, si falla (corte de red, timeout, etc.), lo
+// reintenta solo hasta 5 veces esperando cada vez un poco más. Un lote que se
+// cae por un instante ya no corta toda la carga.
+async function commitConReintentos(armarLote){
+  let ultimoError;
+  for(let intento=1; intento<=5; intento++){
+    try{ const batch = armarLote(); await batch.commit(); return; }
+    catch(e){
+      ultimoError = e;
+      console.warn(`Lote fallido (intento ${intento}/5):`, e);
+      await new Promise(r => setTimeout(r, 1000*Math.pow(2, intento-1)));
     }
+  }
+  throw ultimoError;
+}
+// Reemplaza las guías de Firestore por la lista nueva, en este orden seguro:
+// 1) SUBE las nuevas (lotes de 200, con reintentos) — cada guía se guarda por
+//    su folio, así que repetir la carga nunca duplica nada.
+// 2) Recién cuando TODO subió, borra las guías antiguas que ya no vienen en el
+//    archivo. Antes se borraba todo primero: si la subida se cortaba a la mitad
+//    (pasó con 4.050 de ~9.000), quedaba la base a medio cargar.
+// Si algo falla, las guías anteriores NO se borran y se informa el error.
+async function dbReemplazarGuias(lista, onProgreso){
+  const TAM_LOTE = 200;
+  let actualDocs;
+  try{
+    actualDocs = (await db.collection('guias').get()).docs;
   }catch(e){
-    console.warn('No se pudo borrar las guías anteriores en Firestore:', e);
-    return { ok:false, subidas:0, total:lista.length, error:'No se pudo borrar lo anterior: '+e.message };
+    console.warn('No se pudo leer las guías anteriores en Firestore:', e);
+    return { ok:false, subidas:0, total:lista.length, error:'No se pudo leer lo anterior: '+e.message, estadoActual:null };
   }
   let subidas = 0;
-  for(let i=0;i<lista.length;i+=450){
-    const lote = lista.slice(i,i+450);
+  for(let i=0;i<lista.length;i+=TAM_LOTE){
+    const lote = lista.slice(i,i+TAM_LOTE);
     try{
-      const batch = db.batch();
-      lote.forEach(g => batch.set(db.collection('guias').doc(String(g.folio)), g));
-      await batch.commit();
+      await commitConReintentos(() => {
+        const batch = db.batch();
+        lote.forEach(g => batch.set(db.collection('guias').doc(String(g.folio)), g));
+        return batch;
+      });
       subidas += lote.length;
+      if(onProgreso) onProgreso(subidas, lista.length);
     }catch(e){
       console.warn('No se pudo subir un lote de guías a Firestore:', e);
-      return { ok:false, subidas, total:lista.length, error:e.message };
+      const subidasSet = new Set(lista.slice(0,subidas).map(g => String(g.folio)));
+      const estadoActual = lista.slice(0,subidas).concat(actualDocs.filter(d => !subidasSet.has(d.id)).map(d => d.data()));
+      return { ok:false, subidas, total:lista.length, error:(e.code?e.code+' — ':'')+e.message, estadoActual };
     }
   }
-  return { ok:true, subidas, total:lista.length, error:null };
+  const nuevos = new Set(lista.map(g => String(g.folio)));
+  const obsoletas = actualDocs.filter(d => !nuevos.has(d.id));
+  let aviso = '';
+  for(let i=0;i<obsoletas.length;i+=400){
+    const lote = obsoletas.slice(i,i+400);
+    try{
+      await commitConReintentos(() => { const batch = db.batch(); lote.forEach(d => batch.delete(d.ref)); return batch; });
+    }catch(e){
+      console.warn('No se pudieron borrar guías antiguas:', e);
+      aviso = `No se pudieron borrar ${obsoletas.length-i} guías antiguas que ya no vienen en el archivo (no afecta a las nuevas).`;
+      break;
+    }
+  }
+  return { ok:true, subidas, total:lista.length, error:null, aviso };
 }
 // Clientes: colección aparte, un documento por CodAux — se usa para
 // completar Dirección/Comuna/Ciudad/Giro/Teléfono/RUT en Consulta Guías.
@@ -2869,12 +2906,14 @@ document.getElementById('btnProcesarNV').addEventListener('click', () => {
       const wb = XLSX.read(data, {type:'array', cellDates:true});
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(ws, {defval:null}); // encabezados en la fila 1
-      status.textContent = 'Subiendo a Firestore (puede tardar unos segundos con muchas guías)...';
-      const resultado = await procesarFilasNV(rows);
+      status.textContent = 'Subiendo a Firestore (puede tardar un par de minutos con muchas guías)...';
+      const resultado = await procesarFilasNV(rows, (sub, tot) => {
+        status.textContent = `Subiendo a Firestore... ${sub.toLocaleString('es-CL')} de ${tot.toLocaleString('es-CL')} guías`;
+      });
       if(resultado.ok){
-        status.textContent = `Procesado (${file.name}) — ${resultado.subidas} de ${resultado.total} guías subidas — ${new Date().toLocaleTimeString('es-CL')}`;
+        status.textContent = `Procesado (${file.name}) — ${resultado.subidas.toLocaleString('es-CL')} de ${resultado.total.toLocaleString('es-CL')} guías subidas — ${new Date().toLocaleTimeString('es-CL')}` + (resultado.aviso ? ` — ${resultado.aviso}` : '');
       }else{
-        status.textContent = `⚠️ Se subieron ${resultado.subidas} de ${resultado.total} guías y se detuvo por un error: ${resultado.error}. Vuelve a intentar — no hace falta borrar nada, se reemplaza todo de nuevo.`;
+        status.textContent = `⚠️ Se subieron ${resultado.subidas.toLocaleString('es-CL')} de ${resultado.total.toLocaleString('es-CL')} guías y se detuvo por un error: ${resultado.error}. Las guías anteriores NO se borraron. Vuelve a presionar "Procesar archivo" — se puede repetir sin riesgo, no duplica nada.`;
       }
     }catch(err){
       console.error(err);
@@ -2883,7 +2922,7 @@ document.getElementById('btnProcesarNV').addEventListener('click', () => {
   };
   reader.readAsArrayBuffer(file);
 });
-async function procesarFilasNV(rows){
+async function procesarFilasNV(rows, onProgreso){
   const porFolio = {};
   rows.forEach(row => {
     const tipo = String(row['Tipo']||'').trim();
@@ -2926,8 +2965,12 @@ async function procesarFilasNV(rows){
       });
     }
   });
-  guiasDatos = Object.values(porFolio);
-  const resultado = await dbReemplazarGuias(guiasDatos);
+  const listaNueva = Object.values(porFolio);
+  guiasDatos = listaNueva;
+  const resultado = await dbReemplazarGuias(listaNueva, onProgreso);
+  // Si la subida falló a medias, lo que se muestra debe coincidir con lo que
+  // realmente quedó guardado en Firestore (no con lo que se alcanzó a leer).
+  if(!resultado.ok && resultado.estadoActual) guiasDatos = resultado.estadoActual;
   renderStatsImportNV();
   return resultado;
 }
