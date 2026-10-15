@@ -417,7 +417,7 @@
     <section id="tab-importar" class="tab">
       <div class="panel">
         <h2>Importar Guías de Despacho</h2>
-        <p class="hint">Sube el archivo "Query Guías de Despacho" (.xlsx) — el mismo que usas en Control de Negocios. Se procesan solo las guías <strong>Tipo = S</strong> (Salida) y <strong>Estado = V</strong> (Vigente); el resto se descarta. Guarda N° de Guía, N° de NV, N° de Factura, cliente, vendedor, patente, quién retiró y el detalle de códigos despachados.</p>
+        <p class="hint">Sube el archivo "Query Guías de Despacho" (.xlsx) — el mismo que usas en Control de Negocios. Se procesan solo las guías <strong>Tipo = S</strong> (Salida) y <strong>Estado = V</strong> (Vigente); el resto se descarta. Solo se cargan las guías de los últimos 7 meses. Guarda N° de Guía, N° de NV, N° de Factura, cliente, vendedor, patente, quién retiró y el detalle de códigos despachados.</p>
         <div class="row">
           <input type="file" id="fileInputNV" accept=".xlsx,.xls">
           <button class="btn" id="btnProcesarNV">Procesar archivo</button>
@@ -770,28 +770,45 @@ async function dbEliminarReclamoRemoto(id){
 // Guías: colección aparte, un documento por folio — evita el problema de
 // tamaño que tenía jsonbin (cada guía pesa muy poco por separado; miles de
 // guías en un solo bloque de texto era lo que hacía fallar la sincronización).
-// Ejecuta un lote de escrituras y, si falla (corte de red, timeout, etc.), lo
-// reintenta solo hasta 5 veces esperando cada vez un poco más. Un lote que se
-// cae por un instante ya no corta toda la carga.
+// Ejecuta un lote de escrituras. Si falla (corte de red, etc.) lo reintenta solo
+// hasta 5 veces. OJO: si Firestore deja de responder del todo (pasa cuando se
+// agota la cuota diaria gratuita de escrituras: el SDK reintenta para siempre y
+// la promesa nunca termina ni da error), a los 25 segundos se corta y se avisa,
+// en vez de dejar la pantalla "Subiendo..." colgada sin explicación.
 async function commitConReintentos(armarLote, maxIntentos=5){
   let ultimoError;
   for(let intento=1; intento<=maxIntentos; intento++){
-    try{ const batch = armarLote(); await batch.commit(); return; }
-    catch(e){
+    try{
+      const batch = armarLote();
+      let temporizador;
+      const limite = new Promise((_, rechazar) => { temporizador = setTimeout(() => {
+        const err = new Error('Firestore no respondió en 25 segundos (probable límite diario de escrituras del plan gratuito)');
+        err.code = 'sin-respuesta'; rechazar(err); }, 25000); });
+      try{ await Promise.race([batch.commit(), limite]); } finally { clearTimeout(temporizador); }
+      return;
+    }catch(e){
       ultimoError = e;
+      if(e.code === 'sin-respuesta') throw e; // reintentar no sirve: la cola de escritura quedó trabada
       console.warn(`Lote fallido (intento ${intento}/${maxIntentos}):`, e);
       await new Promise(r => setTimeout(r, 1000*Math.pow(2, intento-1)));
     }
   }
   throw ultimoError;
 }
-// Reemplaza las guías de Firestore por la lista nueva, en este orden seguro:
-// 1) SUBE las nuevas (lotes de 200, con reintentos) — cada guía se guarda por
-//    su folio, así que repetir la carga nunca duplica nada.
-// 2) Recién cuando TODO subió, borra las guías antiguas que ya no vienen en el
-//    archivo. Antes se borraba todo primero: si la subida se cortaba a la mitad
-//    (pasó con 4.050 de ~9.000), quedaba la base a medio cargar.
-// Si algo falla, las guías anteriores NO se borran y se informa el error.
+// Texto estable de una guía (claves ordenadas) para saber si cambió o no.
+function firmaGuia(v){
+  if(Array.isArray(v)) return '['+v.map(firmaGuia).join(',')+']';
+  if(v && typeof v === 'object') return '{'+Object.keys(v).sort().map(k => JSON.stringify(k)+':'+firmaGuia(v[k])).join(',')+'}';
+  return JSON.stringify(v === undefined ? null : v);
+}
+// Deja en Firestore exactamente las guías de la lista, escribiendo SOLO lo que
+// hace falta: las guías nuevas o que cambiaron. Las que ya están iguales no se
+// vuelven a escribir. Importa porque el plan gratuito de Firestore permite solo
+// 20.000 escrituras por día: reescribir ~12.000 guías en cada carga lo agotaba
+// y la subida se quedaba pegada a mitad de camino.
+// Orden seguro: 1) sube lo nuevo/cambiado (lotes de 200, con reintentos);
+// 2) recién después borra las guías que ya no están en la lista (más antiguas
+// que la ventana de meses, o ya no vigentes). Si algo falla, no se borra nada.
 async function dbReemplazarGuias(lista, onProgreso){
   const TAM_LOTE = 200;
   let actualDocs;
@@ -799,46 +816,47 @@ async function dbReemplazarGuias(lista, onProgreso){
     actualDocs = (await db.collection('guias').get()).docs;
   }catch(e){
     console.warn('No se pudo leer las guías anteriores en Firestore:', e);
-    return { ok:false, subidas:0, total:lista.length, error:'No se pudo leer lo anterior: '+e.message, estadoActual:null };
+    return { ok:false, subidas:0, total:lista.length, sinCambios:0, error:'No se pudo leer lo anterior: '+e.message, estadoActual:null, omitidas:[] };
   }
-  let subidas = 0;
+  const existentes = new Map(actualDocs.map(d => [d.id, d.data()]));
+  const aSubir = lista.filter(g => { const e = existentes.get(String(g.folio)); return !e || firmaGuia(e) !== firmaGuia(g); });
+  const sinCambios = lista.length - aSubir.length;
+  const escritas = new Map(); // folio -> guía ya confirmada en Firestore
   const omitidas = [];
-  for(let i=0;i<lista.length;i+=TAM_LOTE){
-    const lote = lista.slice(i,i+TAM_LOTE);
+  const estadoActual = () => { const m = new Map(existentes); escritas.forEach((g,k) => m.set(k,g)); return [...m.values()]; };
+  const falla = (e) => ({ ok:false, subidas:escritas.size, total:lista.length, sinCambios, error:(e.code?e.code+' — ':'')+e.message, estadoActual:estadoActual(), omitidas, porSubir:aSubir.length });
+  for(let i=0;i<aSubir.length;i+=TAM_LOTE){
+    const lote = aSubir.slice(i,i+TAM_LOTE);
     try{
       await commitConReintentos(() => {
         const batch = db.batch();
         lote.forEach(g => batch.set(db.collection('guias').doc(String(g.folio)), g));
         return batch;
       });
-      subidas += lote.length;
-      if(onProgreso) onProgreso(subidas, lista.length);
+      lote.forEach(g => escritas.set(String(g.folio), g));
+      if(onProgreso) onProgreso(escritas.size, aSubir.length);
     }catch(e){
-      // El lote completo no pasó ni con reintentos: probablemente una guía puntual
-      // lo está rompiendo. Se sube guía por guía para saber CUÁL es, se omite y se
-      // sigue con el resto — en vez de cortar toda la carga por una sola.
+      if(e.code === 'sin-respuesta') return falla(e);
+      // El lote no pasó ni con reintentos: probablemente una guía puntual lo
+      // rompe. Se sube guía por guía, se omite la que falle y se sigue.
       console.warn('Lote fallido, se sube guía por guía:', e);
-      let okLote = 0, seguidas = 0;
+      let seguidas = 0;
       for(const g of lote){
         try{
           await commitConReintentos(() => { const b = db.batch(); b.set(db.collection('guias').doc(String(g.folio)), g); return b; }, 3);
-          okLote++; seguidas = 0; subidas++;
+          escritas.set(String(g.folio), g); seguidas = 0;
         }catch(e2){
+          if(e2.code === 'sin-respuesta') return falla(e2);
           seguidas++;
           omitidas.push({ folio:String(g.folio), error:(e2.code?e2.code+' — ':'')+e2.message });
-          // Si fallan 8 seguidas el problema no es una guía sino la conexión/permisos: se detiene.
-          if(seguidas >= 8){
-            const subidasSet = new Set(lista.filter(x => !omitidas.some(o => o.folio===String(x.folio))).slice(0,subidas).map(x => String(x.folio)));
-            const estadoActual = lista.filter(x => subidasSet.has(String(x.folio))).concat(actualDocs.filter(d => !subidasSet.has(d.id)).map(d => d.data()));
-            return { ok:false, subidas, total:lista.length, error:(e2.code?e2.code+' — ':'')+e2.message, estadoActual, omitidas };
-          }
+          if(seguidas >= 8) return falla(e2); // no es una guía: es conexión/permisos
         }
       }
-      if(onProgreso) onProgreso(subidas, lista.length);
+      if(onProgreso) onProgreso(escritas.size, aSubir.length);
     }
   }
-  const nuevos = new Set(lista.map(g => String(g.folio)));
-  const obsoletas = actualDocs.filter(d => !nuevos.has(d.id));
+  const enLista = new Set(lista.map(g => String(g.folio)));
+  const obsoletas = actualDocs.filter(d => !enLista.has(d.id));
   let aviso = '';
   for(let i=0;i<obsoletas.length;i+=400){
     const lote = obsoletas.slice(i,i+400);
@@ -846,11 +864,11 @@ async function dbReemplazarGuias(lista, onProgreso){
       await commitConReintentos(() => { const batch = db.batch(); lote.forEach(d => batch.delete(d.ref)); return batch; });
     }catch(e){
       console.warn('No se pudieron borrar guías antiguas:', e);
-      aviso = `No se pudieron borrar ${obsoletas.length-i} guías antiguas que ya no vienen en el archivo (no afecta a las nuevas).`;
+      aviso = `No se pudieron borrar ${obsoletas.length-i} guías antiguas que ya no corresponden (no afecta a las nuevas).`;
       break;
     }
   }
-  return { ok:true, subidas, total:lista.length, error:null, aviso, omitidas };
+  return { ok:true, subidas:escritas.size, total:lista.length, sinCambios, error:null, aviso, omitidas, borradas:obsoletas.length };
 }
 // Clientes: colección aparte, un documento por CodAux — se usa para
 // completar Dirección/Comuna/Ciudad/Giro/Teléfono/RUT en Consulta Guías.
@@ -2934,12 +2952,13 @@ document.getElementById('btnProcesarNV').addEventListener('click', () => {
       const rows = XLSX.utils.sheet_to_json(ws, {defval:null}); // encabezados en la fila 1
       status.textContent = 'Subiendo a Firestore (puede tardar un par de minutos con muchas guías)...';
       const resultado = await procesarFilasNV(rows, (sub, tot) => {
-        status.textContent = `Subiendo a Firestore... ${sub.toLocaleString('es-CL')} de ${tot.toLocaleString('es-CL')} guías`;
+        status.textContent = `Subiendo a Firestore... ${sub.toLocaleString('es-CL')} de ${tot.toLocaleString('es-CL')} guías nuevas o modificadas`;
       });
+      const v = resultado.ventana ? ` Período cargado: últimos ${resultado.ventana.meses} meses (desde ${resultado.ventana.desde}); ${resultado.ventana.excluidas.toLocaleString('es-CL')} guías más antiguas no se cargan.` : '';
       if(resultado.ok){
-        status.textContent = `Procesado (${file.name}) — ${resultado.subidas.toLocaleString('es-CL')} de ${resultado.total.toLocaleString('es-CL')} guías subidas — ${new Date().toLocaleTimeString('es-CL')}` + (resultado.aviso ? ` — ${resultado.aviso}` : '') + (resultado.omitidas && resultado.omitidas.length ? ` — ⚠️ ${resultado.omitidas.length} guía(s) NO se pudieron subir y se omitieron. Folios: ${resultado.omitidas.slice(0,15).map(o=>o.folio).join(', ')}${resultado.omitidas.length>15?'...':''}. Motivo: ${resultado.omitidas[0].error}` : '');
+        status.textContent = `Procesado (${file.name}) — ${resultado.total.toLocaleString('es-CL')} guías vigentes en la base: ${resultado.subidas.toLocaleString('es-CL')} nuevas o modificadas, ${resultado.sinCambios.toLocaleString('es-CL')} ya estaban al día — ${new Date().toLocaleTimeString('es-CL')}.` + v + (resultado.aviso ? ` ${resultado.aviso}` : '') + (resultado.omitidas && resultado.omitidas.length ? ` ⚠️ ${resultado.omitidas.length} guía(s) NO se pudieron subir y se omitieron. Folios: ${resultado.omitidas.slice(0,15).map(o=>o.folio).join(', ')}${resultado.omitidas.length>15?'...':''}. Motivo: ${resultado.omitidas[0].error}` : '');
       }else{
-        status.textContent = `⚠️ Se subieron ${resultado.subidas.toLocaleString('es-CL')} de ${resultado.total.toLocaleString('es-CL')} guías y se detuvo por un error: ${resultado.error}. Las guías anteriores NO se borraron.${resultado.omitidas&&resultado.omitidas.length?` Folios con problema: ${resultado.omitidas.slice(0,10).map(o=>o.folio).join(', ')}.`:''} Vuelve a presionar "Procesar archivo" — se puede repetir sin riesgo, no duplica nada.`;
+        status.textContent = `⚠️ Se subieron ${resultado.subidas.toLocaleString('es-CL')} de ${(resultado.porSubir||0).toLocaleString('es-CL')} guías nuevas y se detuvo: ${resultado.error}. Las guías anteriores NO se borraron.` + (String(resultado.error).startsWith('sin-respuesta') ? ' Esto suele pasar al agotar el límite diario de escrituras del plan gratuito de Firebase (se renueva cerca de las 4:00 hora de Chile). Vuelve a presionar "Procesar archivo" más tarde: solo subirá lo que falte.' : ' Vuelve a presionar "Procesar archivo": solo subirá lo que falte, no duplica nada.');
       }
     }catch(err){
       console.error(err);
@@ -2948,6 +2967,8 @@ document.getElementById('btnProcesarNV').addEventListener('click', () => {
   };
   reader.readAsArrayBuffer(file);
 });
+// Cuántos meses hacia atrás se mantienen cargadas las guías de despacho.
+const MESES_GUIAS = 7;
 async function procesarFilasNV(rows, onProgreso){
   const porFolio = {};
   rows.forEach(row => {
@@ -2991,9 +3012,17 @@ async function procesarFilasNV(rows, onProgreso){
       });
     }
   });
-  const listaNueva = Object.values(porFolio);
+  // Solo se cargan las guías de los últimos MESES_GUIAS meses (un cliente puede
+  // reclamar hasta 6 meses atrás; el mes extra es margen). Las más antiguas no se
+  // suben: así la base se mantiene liviana y dentro de la cuota gratuita.
+  const desde = new Date(); desde.setMonth(desde.getMonth() - MESES_GUIAS);
+  const desdeISO = desde.toISOString().split('T')[0];
+  const todas = Object.values(porFolio);
+  const listaNueva = todas.filter(g => !g.fecha || g.fecha >= desdeISO);
+  const fueraDeVentana = todas.length - listaNueva.length;
   guiasDatos = listaNueva;
   const resultado = await dbReemplazarGuias(listaNueva, onProgreso);
+  resultado.ventana = { meses: MESES_GUIAS, desde: desdeISO, excluidas: fueraDeVentana };
   // Si la subida falló a medias, lo que se muestra debe coincidir con lo que
   // realmente quedó guardado en Firestore (no con lo que se alcanzó a leer).
   if(!resultado.ok && resultado.estadoActual) guiasDatos = resultado.estadoActual;
