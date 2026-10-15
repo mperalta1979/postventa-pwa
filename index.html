@@ -697,9 +697,17 @@ function puedeVerReclamo(r){
 
 // ==================== Datos (Firestore) ====================
 // Documento único con lo chico (cuentas, contador, motivos, tipos).
-async function dbGuardarConfig(){
+// OJO: reclamoContador NO se escribe acá (salvo en la migración, incluirContador=true).
+// El contador solo lo mueve dbSiguienteNumeroReclamo() con una transacción. Antes,
+// cualquier cambio de usuarios/roles/motivos reescribía el contador con la copia
+// local — que puede estar atrasada hasta 30 segundos — y lo hacía retroceder, con
+// lo que el siguiente reclamo repetía un número ya usado (así pasó con REC-087).
+async function dbGuardarConfig(incluirContador=false){
   try{
-    await db.collection('postventa').doc('config').set({ cuentas, reclamoContador, maestroMotivosReclamo, maestroTiposReclamo, roles });
+    const datos = { cuentas, maestroMotivosReclamo, maestroTiposReclamo, roles };
+    const campos = ['cuentas','maestroMotivosReclamo','maestroTiposReclamo','roles'];
+    if(incluirContador){ datos.reclamoContador = reclamoContador; campos.push('reclamoContador'); }
+    await db.collection('postventa').doc('config').set(datos, { mergeFields: campos });
     return true;
   }catch(e){ console.warn('No se pudo guardar la configuración en Firestore:', e); return false; }
 }
@@ -765,13 +773,13 @@ async function dbEliminarReclamoRemoto(id){
 // Ejecuta un lote de escrituras y, si falla (corte de red, timeout, etc.), lo
 // reintenta solo hasta 5 veces esperando cada vez un poco más. Un lote que se
 // cae por un instante ya no corta toda la carga.
-async function commitConReintentos(armarLote){
+async function commitConReintentos(armarLote, maxIntentos=5){
   let ultimoError;
-  for(let intento=1; intento<=5; intento++){
+  for(let intento=1; intento<=maxIntentos; intento++){
     try{ const batch = armarLote(); await batch.commit(); return; }
     catch(e){
       ultimoError = e;
-      console.warn(`Lote fallido (intento ${intento}/5):`, e);
+      console.warn(`Lote fallido (intento ${intento}/${maxIntentos}):`, e);
       await new Promise(r => setTimeout(r, 1000*Math.pow(2, intento-1)));
     }
   }
@@ -794,6 +802,7 @@ async function dbReemplazarGuias(lista, onProgreso){
     return { ok:false, subidas:0, total:lista.length, error:'No se pudo leer lo anterior: '+e.message, estadoActual:null };
   }
   let subidas = 0;
+  const omitidas = [];
   for(let i=0;i<lista.length;i+=TAM_LOTE){
     const lote = lista.slice(i,i+TAM_LOTE);
     try{
@@ -805,10 +814,27 @@ async function dbReemplazarGuias(lista, onProgreso){
       subidas += lote.length;
       if(onProgreso) onProgreso(subidas, lista.length);
     }catch(e){
-      console.warn('No se pudo subir un lote de guías a Firestore:', e);
-      const subidasSet = new Set(lista.slice(0,subidas).map(g => String(g.folio)));
-      const estadoActual = lista.slice(0,subidas).concat(actualDocs.filter(d => !subidasSet.has(d.id)).map(d => d.data()));
-      return { ok:false, subidas, total:lista.length, error:(e.code?e.code+' — ':'')+e.message, estadoActual };
+      // El lote completo no pasó ni con reintentos: probablemente una guía puntual
+      // lo está rompiendo. Se sube guía por guía para saber CUÁL es, se omite y se
+      // sigue con el resto — en vez de cortar toda la carga por una sola.
+      console.warn('Lote fallido, se sube guía por guía:', e);
+      let okLote = 0, seguidas = 0;
+      for(const g of lote){
+        try{
+          await commitConReintentos(() => { const b = db.batch(); b.set(db.collection('guias').doc(String(g.folio)), g); return b; }, 3);
+          okLote++; seguidas = 0; subidas++;
+        }catch(e2){
+          seguidas++;
+          omitidas.push({ folio:String(g.folio), error:(e2.code?e2.code+' — ':'')+e2.message });
+          // Si fallan 8 seguidas el problema no es una guía sino la conexión/permisos: se detiene.
+          if(seguidas >= 8){
+            const subidasSet = new Set(lista.filter(x => !omitidas.some(o => o.folio===String(x.folio))).slice(0,subidas).map(x => String(x.folio)));
+            const estadoActual = lista.filter(x => subidasSet.has(String(x.folio))).concat(actualDocs.filter(d => !subidasSet.has(d.id)).map(d => d.data()));
+            return { ok:false, subidas, total:lista.length, error:(e2.code?e2.code+' — ':'')+e2.message, estadoActual, omitidas };
+          }
+        }
+      }
+      if(onProgreso) onProgreso(subidas, lista.length);
     }
   }
   const nuevos = new Set(lista.map(g => String(g.folio)));
@@ -824,7 +850,7 @@ async function dbReemplazarGuias(lista, onProgreso){
       break;
     }
   }
-  return { ok:true, subidas, total:lista.length, error:null, aviso };
+  return { ok:true, subidas, total:lista.length, error:null, aviso, omitidas };
 }
 // Clientes: colección aparte, un documento por CodAux — se usa para
 // completar Dirección/Comuna/Ciudad/Giro/Teléfono/RUT en Consulta Guías.
@@ -973,7 +999,7 @@ async function migrarDesdeJsonbin(){
   guiasDatos = dataAnterior.guiasDatos || [];
   reclamosPostventa = reclamosMigrados;
 
-  const okConfig = await dbGuardarConfig();
+  const okConfig = await dbGuardarConfig(true);
   const okGuias = await dbReemplazarGuias(guiasDatos);
   let okReclamos = true;
   for(let i=0;i<reclamosMigrados.length;i+=450){
@@ -2911,9 +2937,9 @@ document.getElementById('btnProcesarNV').addEventListener('click', () => {
         status.textContent = `Subiendo a Firestore... ${sub.toLocaleString('es-CL')} de ${tot.toLocaleString('es-CL')} guías`;
       });
       if(resultado.ok){
-        status.textContent = `Procesado (${file.name}) — ${resultado.subidas.toLocaleString('es-CL')} de ${resultado.total.toLocaleString('es-CL')} guías subidas — ${new Date().toLocaleTimeString('es-CL')}` + (resultado.aviso ? ` — ${resultado.aviso}` : '');
+        status.textContent = `Procesado (${file.name}) — ${resultado.subidas.toLocaleString('es-CL')} de ${resultado.total.toLocaleString('es-CL')} guías subidas — ${new Date().toLocaleTimeString('es-CL')}` + (resultado.aviso ? ` — ${resultado.aviso}` : '') + (resultado.omitidas && resultado.omitidas.length ? ` — ⚠️ ${resultado.omitidas.length} guía(s) NO se pudieron subir y se omitieron. Folios: ${resultado.omitidas.slice(0,15).map(o=>o.folio).join(', ')}${resultado.omitidas.length>15?'...':''}. Motivo: ${resultado.omitidas[0].error}` : '');
       }else{
-        status.textContent = `⚠️ Se subieron ${resultado.subidas.toLocaleString('es-CL')} de ${resultado.total.toLocaleString('es-CL')} guías y se detuvo por un error: ${resultado.error}. Las guías anteriores NO se borraron. Vuelve a presionar "Procesar archivo" — se puede repetir sin riesgo, no duplica nada.`;
+        status.textContent = `⚠️ Se subieron ${resultado.subidas.toLocaleString('es-CL')} de ${resultado.total.toLocaleString('es-CL')} guías y se detuvo por un error: ${resultado.error}. Las guías anteriores NO se borraron.${resultado.omitidas&&resultado.omitidas.length?` Folios con problema: ${resultado.omitidas.slice(0,10).map(o=>o.folio).join(', ')}.`:''} Vuelve a presionar "Procesar archivo" — se puede repetir sin riesgo, no duplica nada.`;
       }
     }catch(err){
       console.error(err);
@@ -2971,6 +2997,7 @@ async function procesarFilasNV(rows, onProgreso){
   // Si la subida falló a medias, lo que se muestra debe coincidir con lo que
   // realmente quedó guardado en Firestore (no con lo que se alcanzó a leer).
   if(!resultado.ok && resultado.estadoActual) guiasDatos = resultado.estadoActual;
+  else if(resultado.ok && resultado.omitidas && resultado.omitidas.length){ const om = new Set(resultado.omitidas.map(o=>o.folio)); guiasDatos = listaNueva.filter(g => !om.has(String(g.folio))); }
   renderStatsImportNV();
   return resultado;
 }
