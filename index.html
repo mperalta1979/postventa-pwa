@@ -1823,7 +1823,7 @@ async function enviarSolicitud(){
   }catch(e){
     console.warn('No se pudo enviar la solicitud:', e);
     const codigoErr = (e && (e.code || e.message)) ? String(e.code || e.message).slice(0,120) : 'desconocido';
-    const causa = /resource-exhausted|quota/i.test(codigoErr) ? 'se alcanzó el límite diario de escritura de la base de datos (se restablece cerca de las 04:00 hora Chile)'
+    const causa = /resource-exhausted|quota/i.test(codigoErr) ? 'se alcanzó el límite diario gratuito de la base de datos, de lecturas o de escrituras (se restablece cerca de las 04:00 hora Chile)'
       : /permission/i.test(codigoErr) ? 'la base de datos rechazó el permiso (sesión o reglas de acceso)'
       : /unavailable|offline|network/i.test(codigoErr) ? 'no hay conexión con la base de datos'
       : 'error al guardar';
