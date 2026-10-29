@@ -2630,6 +2630,56 @@ function dashRenderReconocimiento(visibles){
       <tbody>${filas.map(f=>`<tr><td>${f.nombre}</td><td>${f.guiasA}</td><td>${f.solA}</td><td>${f.tasaA!==null?fmt(f.tasaA,1)+'%':'-'}</td><td>${f.guiasM}</td><td>${f.solM}</td><td>${f.tasaM!==null?fmt(f.tasaM,1)+'%':'-'}</td></tr>`).join('')}</tbody>
     </table></div>`;
   }
+  const normNombre = t => (t||'').toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim().toUpperCase() || 'SIN DATO';
+  function tablaClientes(){
+    const m = {};
+    const get = (nombre) => { const k = normNombre(nombre); return m[k] || (m[k] = { nombre:(nombre||'').toString().trim() || 'Sin dato', guiasA:0, solA:0, guiasM:0, solM:0 }); };
+    guiasDatos.forEach(g => { const f = get(g.cliente); f.guiasA++; if(g.fecha && new Date(g.fecha) >= inicioMes) f.guiasM++; });
+    todasVisiblesReal.forEach(r => { const f = get(r.cliente); f.solA++; if(new Date(r.fecha) >= inicioMes) f.solM++; });
+    return Object.values(m).filter(f => f.solA > 0)
+      .map(f => ({ ...f, tasaA: f.guiasA ? f.solA/f.guiasA*100 : null, tasaM: f.guiasM ? f.solM/f.guiasM*100 : null }))
+      .sort((a,b) => b.solA-a.solA || b.guiasA-a.guiasA || a.nombre.localeCompare(b.nombre));
+  }
+  function htmlTablaClientes(filas){
+    if(!filas.length) return '<p class="hint">Todavía no hay solicitudes.</p>';
+    return `<div class="table-scroll" style="max-height:480px;overflow:auto;"><table>
+      <thead><tr><th>Cliente</th><th>Guías Despachadas</th><th>Solicitudes Post Venta</th><th>Tasa de Reclamo</th><th>Guías Mes en Curso</th><th>Solicitudes Mes en Curso</th><th>Tasa Mes en Curso</th></tr></thead>
+      <tbody>${filas.map(f=>`<tr><td>${f.nombre}</td><td>${fmt(f.guiasA,0)}</td><td>${f.solA}</td><td>${f.tasaA!==null?fmt(f.tasaA,1)+'%':'-'}</td><td>${f.guiasM}</td><td>${f.solM}</td><td>${f.tasaM!==null?fmt(f.tasaM,1)+'%':'-'}</td></tr>`).join('')}</tbody>
+    </table></div>`;
+  }
+  // Por operador de grúa y por mes: guías emitidas en el mes (todas) vs. las que cargó cada gruero.
+  function htmlTablaGrueroPorMes(){
+    const keyMes = iso => /^\d{4}-\d{2}/.test(iso||'') ? String(iso).slice(0,7) : null;
+    const tot = {}, gr = {}, sol = {};
+    guiasDatos.forEach(g => {
+      const k = keyMes(g.fecha); if(!k) return;
+      tot[k] = (tot[k]||0)+1;
+      const o = normNombre(g.operadorGrua);
+      (gr[o] = gr[o] || { nombre:(g.operadorGrua||'').toString().trim() || 'Sin dato', meses:{} }).meses[k] = (gr[o].meses[k]||0)+1;
+    });
+    todasVisiblesReal.forEach(r => {
+      const d = new Date(r.fecha); if(isNaN(d)) return;
+      const k = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      const o = normNombre(r.operadorGrua);
+      sol[o] = sol[o] || {}; sol[o][k] = (sol[o][k]||0)+1;
+      if(!gr[o]) gr[o] = { nombre:(r.operadorGrua||'').toString().trim() || 'Sin dato', meses:{} };
+    });
+    const meses = Object.keys(tot).sort();
+    if(!meses.length) return '<p class="hint">Todavía no hay guías cargadas.</p>';
+    const lbl = k => { const [y,mm]=k.split('-').map(Number); const t = new Date(y,mm-1,1).toLocaleDateString('es-CL',{month:'short',year:'2-digit'}); return t.charAt(0).toUpperCase()+t.slice(1); };
+    const filas = Object.entries(gr).map(([o,v]) => ({ o, nombre:v.nombre, meses:v.meses, total:Object.values(v.meses).reduce((a,b)=>a+b,0), solTot:Object.values(sol[o]||{}).reduce((a,b)=>a+b,0) }))
+      .sort((a,b)=> b.total-a.total || b.solTot-a.solTot);
+    const totGen = Object.values(tot).reduce((a,b)=>a+b,0);
+    const celda = (g, s, t) => (g||s) ? `<td><strong>${fmt(g||0,0)}</strong> <span class="hint">(${t?fmt((g||0)/t*100,1):'0,0'}%)</span>${s?` <span style="color:var(--alert);font-weight:700;">· ${s} sol.</span>`:''}</td>` : '<td class="hint">-</td>';
+    return `<div class="table-scroll" style="overflow:auto;"><table>
+      <thead>
+        <tr><th rowspan="2">Operador de Grúa</th>${meses.map(k=>`<th>${lbl(k)}</th>`).join('')}<th>Total</th></tr>
+        <tr>${meses.map(k=>`<th style="font-weight:400;">emitidas: ${fmt(tot[k],0)}</th>`).join('')}<th style="font-weight:400;">emitidas: ${fmt(totGen,0)}</th></tr>
+      </thead>
+      <tbody>${filas.map(f=>`<tr><td>${f.nombre}</td>${meses.map(k=>celda(f.meses[k], (sol[f.o]||{})[k], tot[k])).join('')}${celda(f.total, f.solTot, totGen)}</tr>`).join('')}</tbody>
+    </table></div>
+    <p class="hint">Cada celda: guías cargadas por el gruero ese mes (y qué % representa de las guías emitidas del mes) y, en rojo, las solicitudes post venta ingresadas ese mes asociadas a él.</p>`;
+  }
   function htmlTablaSinGuias(titulo, filas){
     if(!filas.length) return '<p class="hint">Todavía no hay datos.</p>';
     return `<div class="table-scroll"><table>
@@ -2651,16 +2701,16 @@ function dashRenderReconocimiento(visibles){
     </div>
     <p class="hint" style="margin-top:18px;">Las tablas de abajo muestran siempre el Acumulado de todo el histórico y el Mes en Curso, sin importar el filtro de período de arriba.</p>
     <div style="margin-top:10px;">
-      <h3 style="font-size:.85rem;color:var(--navy);margin:0 0 8px;">🏗️ Guías despachadas vs. Solicitudes Post Venta, por Operador de Grúa</h3>
-      ${htmlTablaConGuias('Operador de Grúa', tablaConGuias('operadorGrua','operadorGrua'))}
+      <h3 style="font-size:.85rem;color:var(--navy);margin:0 0 8px;">🏗️ Guías emitidas vs. guías cargadas por Operador de Grúa, por mes</h3>
+      ${htmlTablaGrueroPorMes()}
     </div>
     <div style="margin-top:18px;">
       <h3 style="font-size:.85rem;color:var(--navy);margin:0 0 8px;">🧑‍💼 Guías despachadas vs. Solicitudes Post Venta, por Vendedor</h3>
       ${htmlTablaConGuias('Vendedor', tablaConGuias('vendedor','vendedor'))}
     </div>
     <div style="margin-top:18px;">
-      <h3 style="font-size:.85rem;color:var(--navy);margin:0 0 8px;">🏢 Guías despachadas vs. Solicitudes Post Venta, por Cliente</h3>
-      ${htmlTablaConGuias('Cliente', tablaConGuias('cliente','cliente'))}
+      <h3 style="font-size:.85rem;color:var(--navy);margin:0 0 8px;">🏢 Guías despachadas vs. Solicitudes Post Venta, por Cliente (de más a menos solicitudes)</h3>
+      ${htmlTablaClientes(tablaClientes())}
     </div>
     <div style="margin-top:18px;">
       <h3 style="font-size:.85rem;color:var(--navy);margin:0 0 8px;">📋 Solicitudes Post Venta, por Motivo</h3>
