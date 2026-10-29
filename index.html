@@ -299,6 +299,10 @@
 
       <div class="panel">
         <h2>Guías emitidas vs. Solicitudes de clientes, por Tipo de Reclamo</h2>
+        <div class="row" style="margin:6px 0;align-items:center;">
+          <label class="hint">Mes:</label>
+          <select id="dashGuiasVsTipoMes"></select>
+        </div>
         <p class="hint" id="dashGuiasVsTipoHint"></p>
         <div id="dashGuiasVsTipo"></div>
       </div>
@@ -2420,17 +2424,27 @@ function dashRenderGuiasVsTipo(){
   // Las solicitudes solo existen desde que se empezó a usar la app; comparar contra
   // guías de meses anteriores (sin solicitudes) bajaría la tasa artificialmente.
   const primerMes = sols.length ? sols.map(x=>keyDe(x.d)).sort()[0] : null;
-  const guiasPeriodo = primerMes ? guias.filter(g => /^\d{4}-\d{2}/.test(g.fecha||'') && String(g.fecha).slice(0,7) >= primerMes) : guias;
+  const guiasBase = primerMes ? guias.filter(g => /^\d{4}-\d{2}/.test(g.fecha||'') && String(g.fecha).slice(0,7) >= primerMes) : guias;
+  // Selector de mes: "todos" o un mes puntual con guías cargadas
+  const sel = document.getElementById('dashGuiasVsTipoMes');
+  const mesesDisp = [...new Set(guiasBase.map(g => /^\d{4}-\d{2}/.test(g.fecha||'') ? String(g.fecha).slice(0,7) : null).filter(Boolean))].sort();
+  const nombreMes = k => { const t = new Date(Number(k.slice(0,4)), Number(k.slice(5,7))-1, 1).toLocaleDateString('es-CL',{month:'long',year:'numeric'}); return t.charAt(0).toUpperCase()+t.slice(1); };
+  let mesSel = sel.dataset.sel || 'todos';
+  if(mesSel!=='todos' && !mesesDisp.includes(mesSel)) mesSel = 'todos';
+  sel.innerHTML = `<option value="todos">Todos los meses</option>` + mesesDisp.map(k => `<option value="${k}">${nombreMes(k)}</option>`).join('');
+  sel.value = mesSel; sel.dataset.sel = mesSel;
+  if(!sel.dataset.listo){ sel.dataset.listo = '1'; sel.addEventListener('change', () => { sel.dataset.sel = sel.value; dashRenderGuiasVsTipo(); }); }
+  const guiasPeriodo = mesSel==='todos' ? guiasBase : guiasBase.filter(g => String(g.fecha).slice(0,7) === mesSel);
   const totG = guiasPeriodo.length;
   const totC = guiasPeriodo.reduce((s,g)=>s+(g.lineas||[]).length,0);
   const porTipo = {};
-  sols.forEach(x => { if(primerMes && keyDe(x.d) < primerMes) return; const t = x.r.tipoReclamo || 'Sin tipo'; const o = porTipo[t] || (porTipo[t] = {n:0,c:0}); o.n++; o.c += (x.r.items||[]).length; });
+  sols.forEach(x => { if(primerMes && keyDe(x.d) < primerMes) return; if(mesSel!=='todos' && keyDe(x.d) !== mesSel) return; const t = x.r.tipoReclamo || 'Sin tipo'; const o = porTipo[t] || (porTipo[t] = {n:0,c:0}); o.n++; o.c += (x.r.items||[]).length; });
   const filas = Object.entries(porTipo).map(([tipo,v]) => ({tipo,n:v.n,c:v.c})).sort((a,b)=>b.n-a.n);
   const totS = filas.reduce((s,f)=>s+f.n,0), totRC = filas.reduce((s,f)=>s+f.c,0);
   document.getElementById('dashGuiasVsTipoHint').textContent = primerMes
-    ? `Guías y códigos despachados desde ${new Date(Number(primerMes.slice(0,4)), Number(primerMes.slice(5,7))-1, 1).toLocaleDateString('es-CL',{month:'long',year:'numeric'})} (primer mes con solicitudes en la app). Tasa según guías = solicitudes ÷ guías emitidas; tasa según códigos = códigos reclamados ÷ códigos despachados. No depende del filtro de período.`
+    ? `${mesSel!=='todos' ? 'Mostrando solo ' + nombreMes(mesSel) + '. ' : ''}Guías y códigos despachados desde ${new Date(Number(primerMes.slice(0,4)), Number(primerMes.slice(5,7))-1, 1).toLocaleDateString('es-CL',{month:'long',year:'numeric'})} (primer mes con solicitudes en la app). Tasa según guías = solicitudes ÷ guías emitidas; tasa según códigos = códigos reclamados ÷ códigos despachados. No depende del filtro de período.`
     : 'Todavía no hay solicitudes.';
-  if(!filas.length){ cont.innerHTML = '<p class="hint">Todavía no hay solicitudes.</p>'; return; }
+  if(!filas.length){ cont.innerHTML = `<p class="hint">No hay solicitudes${mesSel!=='todos'?' en este mes':''}. Guías emitidas: ${fmt(totG,0)} · Códigos despachados: ${fmt(totC,0)}.</p>`; return; }
   const maxN = Math.max(...filas.map(f=>f.n));
   const fp = (a,b) => b ? fmt(a/b*100,2)+'%' : '-';
   cont.innerHTML = `<div class="table-scroll"><table>
