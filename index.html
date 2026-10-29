@@ -298,6 +298,12 @@
       </div>
 
       <div class="panel">
+        <h2>Guías emitidas vs. Solicitudes de clientes, por Tipo de Reclamo</h2>
+        <p class="hint" id="dashGuiasVsTipoHint"></p>
+        <div id="dashGuiasVsTipo"></div>
+      </div>
+
+      <div class="panel">
         <h2>Ranking de códigos más reclamados</h2>
         <p class="hint">Top 10 por cantidad de veces reclamado (todas las solicitudes, cualquier estado).</p>
         <div class="table-scroll">
@@ -2393,11 +2399,39 @@ function dashRenderGuiasVsReclamos(){
   cont.innerHTML = `<div class="table-scroll"><table>
     <thead><tr><th>Mes</th><th>Guías emitidas</th><th>Solicitudes de clientes</th><th>Tasa de reclamo</th><th style="min-width:160px;">Tasa (barra)</th></tr></thead>
     <tbody>${filas.map(f => { const t = f.guias ? f.sol/f.guias*100 : null; return `<tr>
-      <td style="text-transform:capitalize;">${f.label}${f.enCurso?' <span class="hint">(en curso)</span>':''}</td>
+      <td>${f.label.charAt(0).toUpperCase()+f.label.slice(1)}${f.enCurso?' <span class="hint">(en curso)</span>':''}</td>
       <td>${fmt(f.guias,0)}</td><td>${f.sol}</td><td>${t!==null?fmt(t,2)+'%':'-'}</td>
       <td><div class="dash-bar-track"><div style="width:${t!==null?(t/maxT*100):0}%;background:#c0392b;height:100%;"></div></div></td>
     </tr>`; }).join('')}
     <tr style="font-weight:700;"><td>Total</td><td>${fmt(totG,0)}</td><td>${totS}</td><td>${totG?fmt(totS/totG*100,2)+'%':'-'}</td><td></td></tr></tbody>
+  </table></div>`;
+}
+function dashRenderGuiasVsTipo(){
+  const cont = document.getElementById('dashGuiasVsTipo');
+  if(!cont) return;
+  const keyDe = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+  const guias = tienePermiso('verTodasNV') ? guiasDatos : guiasDatos.filter(g => nvPerteneceAMiVendedor(g.vendedor));
+  const sols = reclamosPostventa.filter(puedeVerReclamo).map(r => ({ r, d:new Date(r.fecha) })).filter(x => !isNaN(x.d));
+  if(!guias.length){ cont.innerHTML = '<p class="hint">Todavía no hay guías cargadas.</p>'; return; }
+  // Las solicitudes solo existen desde que se empezó a usar la app; comparar contra
+  // guías de meses anteriores (sin solicitudes) bajaría la tasa artificialmente.
+  const primerMes = sols.length ? sols.map(x=>keyDe(x.d)).sort()[0] : null;
+  const guiasPeriodo = primerMes ? guias.filter(g => /^\d{4}-\d{2}/.test(g.fecha||'') && String(g.fecha).slice(0,7) >= primerMes) : guias;
+  const totG = guiasPeriodo.length;
+  const porTipo = {};
+  sols.forEach(x => { if(primerMes && keyDe(x.d) < primerMes) return; const t = x.r.tipoReclamo || 'Sin tipo'; porTipo[t] = (porTipo[t]||0)+1; });
+  const filas = Object.entries(porTipo).map(([tipo,n]) => ({tipo,n})).sort((a,b)=>b.n-a.n);
+  const totS = filas.reduce((s,f)=>s+f.n,0);
+  document.getElementById('dashGuiasVsTipoHint').textContent = primerMes
+    ? `Guías emitidas desde ${new Date(Number(primerMes.slice(0,4)), Number(primerMes.slice(5,7))-1, 1).toLocaleDateString('es-CL',{month:'long',year:'numeric'})} (primer mes con solicitudes en la app) vs. solicitudes por Tipo de Reclamo. La tasa es solicitudes ÷ total de guías. No depende del filtro de período.`
+    : 'Todavía no hay solicitudes.';
+  if(!filas.length){ cont.innerHTML = '<p class="hint">Todavía no hay solicitudes.</p>'; return; }
+  const maxN = Math.max(...filas.map(f=>f.n));
+  cont.innerHTML = `<div class="table-scroll"><table>
+    <thead><tr><th>Tipo de Reclamo</th><th>Total guías emitidas</th><th>Solicitudes de clientes</th><th>Tasa de reclamo</th><th>% del total de solicitudes</th><th style="min-width:160px;">Solicitudes (barra)</th></tr></thead>
+    <tbody>${filas.map(f => `<tr><td>${f.tipo}</td><td>${fmt(totG,0)}</td><td>${f.n}</td><td>${totG?fmt(f.n/totG*100,2)+'%':'-'}</td><td>${fmt(f.n/totS*100,1)}%</td>
+      <td><div class="dash-bar-track"><div style="width:${f.n/maxN*100}%;background:#c0392b;height:100%;"></div></div></td></tr>`).join('')}
+    <tr style="font-weight:700;"><td>Total</td><td>${fmt(totG,0)}</td><td>${totS}</td><td>${totG?fmt(totS/totG*100,2)+'%':'-'}</td><td>100%</td><td></td></tr></tbody>
   </table></div>`;
 }
 // Cuenta días hábiles (lunes a viernes) entre dos fechas — se usa para medir
@@ -2477,6 +2511,7 @@ function renderDashboard(){
 
   dashRenderEvolucionMensual(visibles);
   dashRenderGuiasVsReclamos();
+  dashRenderGuiasVsTipo();
   dashRenderRankingCodigos(visibles);
   dashRenderReconocimiento(visibles);
 
