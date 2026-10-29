@@ -293,7 +293,7 @@
 
       <div class="panel">
         <h2>Guías emitidas vs. Solicitudes de clientes, por mes</h2>
-        <p class="hint">Por cada mes: guías de despacho emitidas, solicitudes post venta ingresadas ese mes y la tasa de reclamo (solicitudes ÷ guías). Considera los meses con guías cargadas y no depende del filtro de período. Una solicitud se cuenta en el mes en que se ingresó, aunque la guía sea de un mes anterior.</p>
+        <p class="hint">Por cada mes: guías de despacho emitidas, códigos (líneas de producto) despachados, solicitudes post venta ingresadas ese mes y códigos reclamados. Tasa según guías = solicitudes ÷ guías; tasa según códigos = códigos reclamados ÷ códigos despachados. Considera los meses con guías cargadas y no depende del filtro de período. Una solicitud se cuenta en el mes en que se ingresó, aunque la guía sea de un mes anterior.</p>
         <div id="dashGuiasVsReclamos"></div>
       </div>
 
@@ -2383,27 +2383,31 @@ function dashRenderGuiasVsReclamos(){
   if(!cont) return;
   const keyDe = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
   const guias = tienePermiso('verTodasNV') ? guiasDatos : guiasDatos.filter(g => nvPerteneceAMiVendedor(g.vendedor));
-  const gPorMes = {};
-  guias.forEach(g => { const k = /^\d{4}-\d{2}/.test(g.fecha||'') ? String(g.fecha).slice(0,7) : null; if(!k) return; gPorMes[k] = (gPorMes[k]||0)+1; });
-  const rPorMes = {};
-  reclamosPostventa.filter(puedeVerReclamo).forEach(r => { const d = new Date(r.fecha); if(isNaN(d)) return; const k = keyDe(d); rPorMes[k] = (rPorMes[k]||0)+1; });
+  const gPorMes = {}, cPorMes = {};
+  guias.forEach(g => { const k = /^\d{4}-\d{2}/.test(g.fecha||'') ? String(g.fecha).slice(0,7) : null; if(!k) return; gPorMes[k] = (gPorMes[k]||0)+1; cPorMes[k] = (cPorMes[k]||0)+(g.lineas||[]).length; });
+  const rPorMes = {}, rcPorMes = {};
+  reclamosPostventa.filter(puedeVerReclamo).forEach(r => { const d = new Date(r.fecha); if(isNaN(d)) return; const k = keyDe(d); rPorMes[k] = (rPorMes[k]||0)+1; rcPorMes[k] = (rcPorMes[k]||0)+(r.items||[]).length; });
   const claves = Object.keys(gPorMes).sort();
   if(!claves.length){ cont.innerHTML = '<p class="hint">Todavía no hay guías cargadas.</p>'; return; }
   const hoyKey = keyDe(new Date());
   const filas = claves.map(k => {
     const [y,m] = k.split('-').map(Number);
-    return { key:k, label:new Date(y,m-1,1).toLocaleDateString('es-CL',{month:'long',year:'numeric'}), guias:gPorMes[k], sol:rPorMes[k]||0, enCurso:k===hoyKey };
+    const lab = new Date(y,m-1,1).toLocaleDateString('es-CL',{month:'long',year:'numeric'});
+    return { key:k, label:lab.charAt(0).toUpperCase()+lab.slice(1), guias:gPorMes[k], cods:cPorMes[k]||0, sol:rPorMes[k]||0, codsRec:rcPorMes[k]||0, enCurso:k===hoyKey };
   });
-  const maxT = Math.max(0.0001, ...filas.map(f=>f.guias ? f.sol/f.guias*100 : 0));
-  const totG = filas.reduce((s,f)=>s+f.guias,0), totS = filas.reduce((s,f)=>s+f.sol,0);
+  const pct = (a,b) => b ? a/b*100 : null;
+  const tg = f => pct(f.sol,f.guias), tc = f => pct(f.codsRec,f.cods);
+  const maxT = Math.max(0.0001, ...filas.map(f=>tg(f)||0));
+  const tot = filas.reduce((t,f)=>({guias:t.guias+f.guias,cods:t.cods+f.cods,sol:t.sol+f.sol,codsRec:t.codsRec+f.codsRec}),{guias:0,cods:0,sol:0,codsRec:0});
+  const fp = v => v!==null ? fmt(v,2)+'%' : '-';
   cont.innerHTML = `<div class="table-scroll"><table>
-    <thead><tr><th>Mes</th><th>Guías emitidas</th><th>Solicitudes de clientes</th><th>Tasa de reclamo</th><th style="min-width:160px;">Tasa (barra)</th></tr></thead>
-    <tbody>${filas.map(f => { const t = f.guias ? f.sol/f.guias*100 : null; return `<tr>
-      <td>${f.label.charAt(0).toUpperCase()+f.label.slice(1)}${f.enCurso?' <span class="hint">(en curso)</span>':''}</td>
-      <td>${fmt(f.guias,0)}</td><td>${f.sol}</td><td>${t!==null?fmt(t,2)+'%':'-'}</td>
-      <td><div class="dash-bar-track"><div style="width:${t!==null?(t/maxT*100):0}%;background:#c0392b;height:100%;"></div></div></td>
-    </tr>`; }).join('')}
-    <tr style="font-weight:700;"><td>Total</td><td>${fmt(totG,0)}</td><td>${totS}</td><td>${totG?fmt(totS/totG*100,2)+'%':'-'}</td><td></td></tr></tbody>
+    <thead><tr><th>Mes</th><th>Guías emitidas</th><th>Códigos despachados</th><th>Solicitudes de clientes</th><th>Códigos reclamados</th><th>Tasa según guías</th><th>Tasa según códigos</th><th style="min-width:140px;">Tasa según guías (barra)</th></tr></thead>
+    <tbody>${filas.map(f => `<tr>
+      <td>${f.label}${f.enCurso?' <span class="hint">(en curso)</span>':''}</td>
+      <td>${fmt(f.guias,0)}</td><td>${fmt(f.cods,0)}</td><td>${f.sol}</td><td>${f.codsRec}</td><td>${fp(tg(f))}</td><td>${fp(tc(f))}</td>
+      <td><div class="dash-bar-track"><div style="width:${(tg(f)||0)/maxT*100}%;background:#c0392b;height:100%;"></div></div></td>
+    </tr>`).join('')}
+    <tr style="font-weight:700;"><td>Total</td><td>${fmt(tot.guias,0)}</td><td>${fmt(tot.cods,0)}</td><td>${tot.sol}</td><td>${tot.codsRec}</td><td>${fp(tg(tot))}</td><td>${fp(tc(tot))}</td><td></td></tr></tbody>
   </table></div>`;
 }
 function dashRenderGuiasVsTipo(){
@@ -2418,20 +2422,22 @@ function dashRenderGuiasVsTipo(){
   const primerMes = sols.length ? sols.map(x=>keyDe(x.d)).sort()[0] : null;
   const guiasPeriodo = primerMes ? guias.filter(g => /^\d{4}-\d{2}/.test(g.fecha||'') && String(g.fecha).slice(0,7) >= primerMes) : guias;
   const totG = guiasPeriodo.length;
+  const totC = guiasPeriodo.reduce((s,g)=>s+(g.lineas||[]).length,0);
   const porTipo = {};
-  sols.forEach(x => { if(primerMes && keyDe(x.d) < primerMes) return; const t = x.r.tipoReclamo || 'Sin tipo'; porTipo[t] = (porTipo[t]||0)+1; });
-  const filas = Object.entries(porTipo).map(([tipo,n]) => ({tipo,n})).sort((a,b)=>b.n-a.n);
-  const totS = filas.reduce((s,f)=>s+f.n,0);
+  sols.forEach(x => { if(primerMes && keyDe(x.d) < primerMes) return; const t = x.r.tipoReclamo || 'Sin tipo'; const o = porTipo[t] || (porTipo[t] = {n:0,c:0}); o.n++; o.c += (x.r.items||[]).length; });
+  const filas = Object.entries(porTipo).map(([tipo,v]) => ({tipo,n:v.n,c:v.c})).sort((a,b)=>b.n-a.n);
+  const totS = filas.reduce((s,f)=>s+f.n,0), totRC = filas.reduce((s,f)=>s+f.c,0);
   document.getElementById('dashGuiasVsTipoHint').textContent = primerMes
-    ? `Guías emitidas desde ${new Date(Number(primerMes.slice(0,4)), Number(primerMes.slice(5,7))-1, 1).toLocaleDateString('es-CL',{month:'long',year:'numeric'})} (primer mes con solicitudes en la app) vs. solicitudes por Tipo de Reclamo. La tasa es solicitudes ÷ total de guías. No depende del filtro de período.`
+    ? `Guías y códigos despachados desde ${new Date(Number(primerMes.slice(0,4)), Number(primerMes.slice(5,7))-1, 1).toLocaleDateString('es-CL',{month:'long',year:'numeric'})} (primer mes con solicitudes en la app). Tasa según guías = solicitudes ÷ guías emitidas; tasa según códigos = códigos reclamados ÷ códigos despachados. No depende del filtro de período.`
     : 'Todavía no hay solicitudes.';
   if(!filas.length){ cont.innerHTML = '<p class="hint">Todavía no hay solicitudes.</p>'; return; }
   const maxN = Math.max(...filas.map(f=>f.n));
+  const fp = (a,b) => b ? fmt(a/b*100,2)+'%' : '-';
   cont.innerHTML = `<div class="table-scroll"><table>
-    <thead><tr><th>Tipo de Reclamo</th><th>Total guías emitidas</th><th>Solicitudes de clientes</th><th>Tasa de reclamo</th><th>% del total de solicitudes</th><th style="min-width:160px;">Solicitudes (barra)</th></tr></thead>
-    <tbody>${filas.map(f => `<tr><td>${f.tipo}</td><td>${fmt(totG,0)}</td><td>${f.n}</td><td>${totG?fmt(f.n/totG*100,2)+'%':'-'}</td><td>${fmt(f.n/totS*100,1)}%</td>
+    <thead><tr><th>Tipo de Reclamo</th><th>Guías emitidas</th><th>Códigos despachados</th><th>Solicitudes de clientes</th><th>Códigos reclamados</th><th>Tasa según guías</th><th>Tasa según códigos</th><th style="min-width:140px;">Solicitudes (barra)</th></tr></thead>
+    <tbody>${filas.map(f => `<tr><td>${f.tipo}</td><td>${fmt(totG,0)}</td><td>${fmt(totC,0)}</td><td>${f.n}</td><td>${f.c}</td><td>${fp(f.n,totG)}</td><td>${fp(f.c,totC)}</td>
       <td><div class="dash-bar-track"><div style="width:${f.n/maxN*100}%;background:#c0392b;height:100%;"></div></div></td></tr>`).join('')}
-    <tr style="font-weight:700;"><td>Total</td><td>${fmt(totG,0)}</td><td>${totS}</td><td>${totG?fmt(totS/totG*100,2)+'%':'-'}</td><td>100%</td><td></td></tr></tbody>
+    <tr style="font-weight:700;"><td>Total</td><td>${fmt(totG,0)}</td><td>${fmt(totC,0)}</td><td>${totS}</td><td>${totRC}</td><td>${fp(totS,totG)}</td><td>${fp(totRC,totC)}</td><td></td></tr></tbody>
   </table></div>`;
 }
 // Cuenta días hábiles (lunes a viernes) entre dos fechas — se usa para medir
